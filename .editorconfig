@@ -1,1 +1,328 @@
+# ═══════════════════════════════════════════════════════════
+# XURY NAT ENGINE — .editorconfig
+# ═══════════════════════════════════════════════════════════
+#
+# Scope    : NAT only
+# Platform : Linux + Android (plug-in ready for other OS)
+# Language : C (C11)
+# Build    : CMake
+#
+# EditorConfig : https://editorconfig.org
+#
+# Supported editors:
+#   VSCode, Vim, Neovim, Emacs, CLion, Sublime, Atom,
+#   Notepad++, Visual Studio
+#
+# ═══════════════════════════════════════════════════════════
 
+
+# ───────────────────────────────────────────────────────────
+# ROOT
+# ───────────────────────────────────────────────────────────
+# Stop searching parent directories. This is top-most config.
+
+root = true
+
+
+# ───────────────────────────────────────────────────────────
+# DEFAULT — ALL FILES
+# ───────────────────────────────────────────────────────────
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+tab_width = 4
+
+
+# ───────────────────────────────────────────────────────────
+# C SOURCE & HEADERS
+# ───────────────────────────────────────────────────────────
+
+[*.{c,h}]
+indent_style = space
+indent_size = 4
+tab_width = 4
+max_line_length = 80
+charset = utf-8
+end_of_line = lf
+
+
+# ───────────────────────────────────────────────────────────
+# PUBLIC HEADERS
+# ───────────────────────────────────────────────────────────
+# API stability matters. Same style as source.
+
+[include/xury/*.h]
+indent_style = space
+indent_size = 4
+max_line_length = 80
+
+
+# ───────────────────────────────────────────────────────────
+# PRIVATE SOURCES
+# ───────────────────────────────────────────────────────────
+
+[src/**/*.c]
+indent_style = space
+indent_size = 4
+max_line_length = 80
+
+[src/**/*.h]
+indent_style = space
+indent_size = 4
+max_line_length = 80
+
+
+# ───────────────────────────────────────────────────────────
+# PLATFORM — POSIX (Linux + Android share)
+# ───────────────────────────────────────────────────────────
+
+[src/platform/posix/*.{c,h}]
+indent_style = space
+indent_size = 4
+max_line_length = 80
+
+
+# ───────────────────────────────────────────────────────────
+# PLATFORM — LINUX SPECIFIC
+# ───────────────────────────────────────────────────────────
+
+[src/platform/linux/*.{c,h}]
+indent_style = space
+indent_size = 4
+max_line_length = 80
+
+
+# ───────────────────────────────────────────────────────────
+# PLATFORM — ANDROID SPECIFIC
+# ───────────────────────────────────────────────────────────
+
+[src/platform/android/*.{c,h}]
+indent_style = space
+indent_size = 4
+max_line_length = 80
+
+# Android NDK build files
+[src/platform/android/*.mk]
+indent_style = tab
+indent_size = 4
+
+
+# ───────────────────────────────────────────────────────────
+# PLATFORM — PLACEHOLDERS (Windows, macOS, iOS)
+# ───────────────────────────────────────────────────────────
+# Kept ready for future OS addition without core change.
+
+[src/platform/windows/*.{c,h}]
+indent_style = space
+indent_size = 4
+max_line_length = 80
+
+[src/platform/macos/*.{c,h}]
+indent_style = space
+indent_size = 4
+max_line_length = 80
+
+[src/platform/ios/*.{c,h}]
+indent_style = space
+indent_size = 4
+max_line_length = 80
+
+
+# ───────────────────────────────────────────────────────────
+# CMAKE
+# ───────────────────────────────────────────────────────────
+# CMake uses 2-space indent by convention.
+
+[CMakeLists.txt]
+indent_style = space
+indent_size = 2
+
+[*.cmake]
+indent_style = space
+indent_size = 2
+
+[cmake/**/*.cmake]
+indent_style = space
+indent_size = 2
+
+[cmake/**/*.cmake.in]
+indent_style = space
+indent_size = 2
+
+
+# ───────────────────────────────────────────────────────────
+# MAKEFILE
+# ───────────────────────────────────────────────────────────
+# Makefiles REQUIRE tabs for recipes.
+
+[Makefile]
+indent_style = tab
+indent_size = 4
+
+[*.mk]
+indent_style = tab
+indent_size = 4
+
+
+# ───────────────────────────────────────────────────────────
+# SHELL SCRIPTS
+# ───────────────────────────────────────────────────────────
+
+[*.sh]
+indent_style = space
+indent_size = 4
+end_of_line = lf
+
+[scripts/*.sh]
+indent_style = space
+indent_size = 4
+
+
+# ───────────────────────────────────────────────────────────
+# MARKDOWN
+# ───────────────────────────────────────────────────────────
+# Preserve trailing whitespace (Markdown uses it for line breaks).
+
+[*.md]
+indent_style = space
+indent_size = 2
+trim_trailing_whitespace = false
+max_line_length = off
+
+
+# ───────────────────────────────────────────────────────────
+# YAML — CI/CD
+# ───────────────────────────────────────────────────────────
+
+[*.{yml,yaml}]
+indent_style = space
+indent_size = 2
+end_of_line = lf
+
+[.github/workflows/*.yml]
+indent_style = space
+indent_size = 2
+
+[.github/workflows/*.yaml]
+indent_style = space
+indent_size = 2
+
+
+# ───────────────────────────────────────────────────────────
+# JSON
+# ───────────────────────────────────────────────────────────
+
+[*.json]
+indent_style = space
+indent_size = 2
+
+[*.json.example]
+indent_style = space
+indent_size = 2
+
+
+# ───────────────────────────────────────────────────────────
+# TOML
+# ───────────────────────────────────────────────────────────
+
+[*.toml]
+indent_style = space
+indent_size = 2
+
+
+# ───────────────────────────────────────────────────────────
+# GIT
+# ───────────────────────────────────────────────────────────
+
+[.gitignore]
+indent_style = space
+indent_size = 4
+
+[.gitattributes]
+indent_style = space
+indent_size = 4
+
+
+# ───────────────────────────────────────────────────────────
+# CLANG-FORMAT / CLANG-TIDY
+# ───────────────────────────────────────────────────────────
+# These are YAML-based configs.
+
+[.clang-format]
+indent_style = space
+indent_size = 2
+
+[.clang-tidy]
+indent_style = space
+indent_size = 2
+
+
+# ───────────────────────────────────────────────────────────
+# LICENSE
+# ───────────────────────────────────────────────────────────
+# Preserve exactly. Legal document.
+
+[LICENSE]
+indent_style = space
+indent_size = 4
+trim_trailing_whitespace = false
+insert_final_newline = true
+
+
+# ───────────────────────────────────────────────────────────
+# TESTS
+# ───────────────────────────────────────────────────────────
+
+[tests/**/*.c]
+indent_style = space
+indent_size = 4
+max_line_length = 80
+
+[tests/**/*.h]
+indent_style = space
+indent_size = 4
+max_line_length = 80
+
+
+# ───────────────────────────────────────────────────────────
+# EXAMPLES
+# ───────────────────────────────────────────────────────────
+
+[examples/**/*.c]
+indent_style = space
+indent_size = 4
+max_line_length = 80
+
+[examples/**/*.h]
+indent_style = space
+indent_size = 4
+max_line_length = 80
+
+
+# ───────────────────────────────────────────────────────────
+# DOCS
+# ───────────────────────────────────────────────────────────
+
+[docs/**/*.md]
+indent_style = space
+indent_size = 2
+trim_trailing_whitespace = false
+
+
+# ───────────────────────────────────────────────────────────
+# PATCH / DIFF
+# ───────────────────────────────────────────────────────────
+# Never modify these.
+
+[*.{diff,patch}]
+trim_trailing_whitespace = false
+
+
+# ═══════════════════════════════════════════════════════════
+# END OF .editorconfig
+# ═══════════════════════════════════════════════════════════
