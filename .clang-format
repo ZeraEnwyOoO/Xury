@@ -1,1 +1,319 @@
+# ═══════════════════════════════════════════════════════════
+# XURY NAT ENGINE — .clang-format
+# ═══════════════════════════════════════════════════════════
+#
+# Scope    : NAT only
+# Platform : Linux + Android (plug-in for other OS)
+# Language : C (C11)
+# Style    : Linux kernel-like, adapted for Xury
+#
+# Apply:
+#   clang-format -i src/**/*.c src/**/*.h
+#
+# Check (CI):
+#   clang-format --dry-run --Werror src/**/*.c src/**/*.h
+#
+# ═══════════════════════════════════════════════════════════
 
+---
+# ───────────────────────────────────────────────────────────
+# BASE
+# ───────────────────────────────────────────────────────────
+Language: Cpp
+Standard: c++17
+BasedOnStyle: LLVM
+
+
+# ───────────────────────────────────────────────────────────
+# INDENTATION
+# ───────────────────────────────────────────────────────────
+# 4 spaces, no tabs — matches .editorconfig
+
+UseTab: Never
+IndentWidth: 4
+TabWidth: 4
+ContinuationIndentWidth: 4
+
+IndentAccessModifiers: false
+IndentCaseLabels: false
+IndentGotoLabels: false
+IndentPPDirectives: None
+IndentWrappedFunctionNames: false
+
+
+# ───────────────────────────────────────────────────────────
+# LINE LENGTH
+# ───────────────────────────────────────────────────────────
+# 80 columns — matches .editorconfig
+
+ColumnLimit: 80
+
+
+# ───────────────────────────────────────────────────────────
+# BRACES — K&R style (Linux kernel)
+# ───────────────────────────────────────────────────────────
+
+BreakBeforeBraces: Attach
+
+BraceWrapping:
+  AfterCaseLabel: false
+  AfterClass: false
+  AfterControlStatement: Never
+  AfterEnum: false
+  AfterExternBlock: false
+  AfterFunction: false
+  AfterNamespace: false
+  AfterObjCDeclaration: false
+  AfterStruct: false
+  AfterUnion: false
+  BeforeCatch: false
+  BeforeElse: false
+  BeforeLambdaBody: false
+  BeforeWhile: false
+  IndentBraces: false
+  SplitEmptyFunction: true
+  SplitEmptyRecord: true
+  SplitEmptyNamespace: true
+
+
+# ───────────────────────────────────────────────────────────
+# POINTERS — int *ptr (attached to name)
+# ───────────────────────────────────────────────────────────
+
+PointerAlignment: Right
+DerivePointerAlignment: false
+
+
+# ───────────────────────────────────────────────────────────
+# SPACING
+# ───────────────────────────────────────────────────────────
+
+SpaceAfterCStyleCast: false
+SpaceAfterLogicalNot: false
+SpaceAfterTemplateKeyword: true
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeCaseColon: false
+SpaceBeforeCpp11BracedList: false
+SpaceBeforeCtorInitializerColon: true
+SpaceBeforeInheritanceColon: true
+SpaceBeforeParens: ControlStatements
+SpaceBeforeRangeBasedForLoopColon: true
+SpaceBeforeSquareBrackets: false
+SpaceInEmptyBlock: false
+SpaceInEmptyParentheses: false
+SpacesBeforeTrailingComments: 2
+SpacesInAngles: false
+SpacesInCStyleCastParentheses: false
+SpacesInConditionalStatement: false
+SpacesInContainerLiterals: false
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+
+
+# ───────────────────────────────────────────────────────────
+# ALIGNMENT
+# ───────────────────────────────────────────────────────────
+
+AlignAfterOpenBracket: Align
+AlignArrayOfStructures: None
+AlignConsecutiveAssignments: None
+AlignConsecutiveBitFields: None
+AlignConsecutiveDeclarations: None
+AlignConsecutiveMacros: None
+AlignEscapedNewlines: Right
+AlignOperands: Align
+AlignTrailingComments: true
+
+
+# ───────────────────────────────────────────────────────────
+# LINE BREAKS
+# ───────────────────────────────────────────────────────────
+
+AllowAllArgumentsOnNextLine: true
+AllowAllParametersOfDeclarationOnNextLine: true
+AllowShortBlocksOnASingleLine: Never
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortEnumsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLambdasOnASingleLine: None
+AllowShortLoopsOnASingleLine: false
+
+AlwaysBreakAfterReturnType: None
+AlwaysBreakAfterDefinitionReturnType: None
+AlwaysBreakBeforeMultilineStrings: false
+AlwaysBreakTemplateDeclarations: Yes
+
+
+# ───────────────────────────────────────────────────────────
+# FUNCTION CALLS & DECLARATIONS
+# ───────────────────────────────────────────────────────────
+
+BinPackArguments: true
+BinPackParameters: true
+
+
+# ───────────────────────────────────────────────────────────
+# COMMENTS
+# ───────────────────────────────────────────────────────────
+
+ReflowComments: true
+
+AlignTrailingComments:
+  Kind: Always
+  OverEmptyLines: 0
+
+
+# ───────────────────────────────────────────────────────────
+# SORTING
+# ───────────────────────────────────────────────────────────
+# Disabled — we manage include order manually
+
+SortIncludes: Never
+SortUsingDeclarations: false
+
+
+# ───────────────────────────────────────────────────────────
+# EMPTY LINES
+# ───────────────────────────────────────────────────────────
+
+MaxEmptyLinesToKeep: 2
+KeepEmptyLinesAtTheStartOfBlocks: false
+
+
+# ───────────────────────────────────────────────────────────
+# MACROS — Xury-specific
+# ───────────────────────────────────────────────────────────
+
+AttributeMacros:
+  - __attribute__
+  - __declspec
+  - __cdecl
+  - __stdcall
+  - __fastcall
+  - __forceinline
+  - __inline
+  - __restrict
+  - __unused
+  - __maybe_unused
+  - __packed
+  - __aligned
+  - __noreturn
+  - __wur
+
+StatementMacros:
+  - XURY_LOG_DEBUG
+  - XURY_LOG_INFO
+  - XURY_LOG_WARN
+  - XURY_LOG_ERROR
+  - XURY_LOG_FATAL
+  - XURY_UNUSED
+  - XURY_LIKELY
+  - XURY_UNLIKELY
+  - XURY_INLINE
+  - XURY_EXPORT
+
+TypeNames:
+  - xury_engine_t
+  - xury_endpoint_t
+  - xury_peer_id_t
+  - xury_nat_type_t
+  - xury_nat_label_t
+  - xury_scan_result_t
+  - xury_err_t
+  - xury_config_t
+  - xury_phase_t
+  - xury_weapon_t
+  - xury_strategy_t
+  - xury_cgnat_type_t
+  - xury_mirror_probe_t
+  - xury_mirror_response_t
+  - xury_relay_request_t
+  - xury_sock_t
+  - xury_allocator_t
+  - xury_storage_iface_t
+
+
+# ───────────────────────────────────────────────────────────
+# NAMESPACE / EXTERN "C"
+# ───────────────────────────────────────────────────────────
+
+NamespaceIndentation: None
+FixNamespaceComments: false
+
+
+# ───────────────────────────────────────────────────────────
+# OPERATORS
+# ───────────────────────────────────────────────────────────
+
+BreakBeforeBinaryOperators: NonAssignment
+BreakBeforeTernaryOperators: true
+Cpp11BracedListStyle: true
+
+
+# ───────────────────────────────────────────────────────────
+# LAMBDA (future)
+# ───────────────────────────────────────────────────────────
+
+LambdaBodyIndentation: Signature
+
+
+# ───────────────────────────────────────────────────────────
+# INCLUDE BLOCKS
+# ───────────────────────────────────────────────────────────
+# Preserve manual order. Categories defined for future use.
+
+IncludeBlocks: Preserve
+
+IncludeCategories:
+  - Regex:    '^<xury/'
+    Priority: 1
+  - Regex:    '^"'
+    Priority: 2
+  - Regex:    '^<'
+    Priority: 3
+
+
+# ───────────────────────────────────────────────────────────
+# CONSTRUCTOR INITIALIZERS (C++ future)
+# ───────────────────────────────────────────────────────────
+
+BreakConstructorInitializers: BeforeColon
+ConstructorInitializerIndentWidth: 4
+PackConstructorInitializers: Never
+
+
+# ───────────────────────────────────────────────────────────
+# LINE ENDINGS
+# ───────────────────────────────────────────────────────────
+# LF only — matches .editorconfig
+
+DeriveLineEnding: false
+UseCRLF: false
+
+
+# ───────────────────────────────────────────────────────────
+# PENALTIES (readability tuning)
+# ───────────────────────────────────────────────────────────
+
+PenaltyBreakAssignment: 2
+PenaltyBreakBeforeFirstCallParameter: 1
+PenaltyBreakComment: 300
+PenaltyBreakFirstLessLess: 120
+PenaltyBreakOpenParenthesis: 0
+PenaltyBreakString: 1000
+PenaltyExcessCharacter: 1000000
+PenaltyReturnTypeOnItsOwnLine: 60
+
+
+# ───────────────────────────────────────────────────────────
+# OBJC (not used — safe defaults)
+# ───────────────────────────────────────────────────────────
+
+ObjCBinPackProtocolList: Auto
+ObjCBlockIndentWidth: 2
+ObjCBreakBeforeNestedBlockParam: true
+ObjCSpaceAfterProperty: false
+ObjCSpaceBeforeProtocolList: true
+
+...
