@@ -304,4 +304,385 @@ static void test_defaults_explicit_version_keeps_booleans_off(void)
     TEST_ASSERT(!out.enable_blitz);
 }
 
-/* ---- continued in part 2/2 ---- */
+ /* ---- continued from part 1/2 ---- */
+
+/*
+ * ============================================================================
+ * NORMALIZE
+ * ============================================================================
+ */
+
+static void test_normalize_null(void)
+{
+    TEST_ASSERT_EQ(xury_config_normalize(NULL), XURY_ERR_INVAL);
+}
+
+static void test_normalize_clamps_scan_timeout(void)
+{
+    /* Build a config with a value above MAX and confirm it's clamped. */
+    xury_config_t in  = zero_cfg();
+    xury_config_t out = zero_cfg();
+
+    in.scan_timeout_ms = XURY_CONFIG_MAX_SCAN_MS + 10000u;
+    TEST_ASSERT_EQ(xury_config_apply_defaults(&in, &out), XURY_OK);
+    TEST_ASSERT_EQ(xury_config_normalize(&out), XURY_OK);
+    TEST_ASSERT_EQ(out.scan_timeout_ms, XURY_CONFIG_MAX_SCAN_MS);
+
+    /* Below MIN. */
+    in.scan_timeout_ms = 1u;
+    TEST_ASSERT_EQ(xury_config_apply_defaults(&in, &out), XURY_OK);
+    TEST_ASSERT_EQ(xury_config_normalize(&out), XURY_OK);
+    TEST_ASSERT_EQ(out.scan_timeout_ms, XURY_CONFIG_MIN_SCAN_MS);
+}
+
+static void test_normalize_clamps_max_parallel(void)
+{
+    xury_config_t in  = zero_cfg();
+    xury_config_t out = zero_cfg();
+
+    in.max_parallel = 0u;
+    xury_config_apply_defaults(&in, &out);
+    xury_config_normalize(&out);
+    TEST_ASSERT(out.max_parallel >= XURY_CONFIG_MIN_PARALLEL);
+    TEST_ASSERT(out.max_parallel <= XURY_CONFIG_MAX_PARALLEL);
+}
+
+static void test_normalize_aggressive_gate(void)
+{
+    /*
+     * BIRTHDAY and UPGRADE must be cleared unless the host opted in
+     * via enable_sweet_aggressive.
+     */
+    xury_config_t c = zero_cfg();
+    xury_config_apply_defaults(&c, &c);
+
+    c.enable_weapons = XURY_WEAPON_BIT(XURY_WEAPON_IPV6) |
+                       XURY_WEAPON_BIT(XURY_WEAPON_BIRTHDAY) |
+                       XURY_WEAPON_BIT(XURY_WEAPON_UPGRADE);
+    c.enable_sweet_aggressive = false;
+
+    TEST_ASSERT_EQ(xury_config_normalize(&c), XURY_OK);
+
+    TEST_ASSERT(!xury_config_weapon_enabled(&c, XURY_WEAPON_BIRTHDAY));
+    TEST_ASSERT(!xury_config_weapon_enabled(&c, XURY_WEAPON_UPGRADE));
+    TEST_ASSERT(xury_config_weapon_enabled(&c, XURY_WEAPON_IPV6));
+}
+
+static void test_normalize_aggressive_allowed(void)
+{
+    xury_config_t c = zero_cfg();
+    xury_config_apply_defaults(&c, &c);
+
+    c.enable_weapons = XURY_WEAPON_BIT(XURY_WEAPON_BIRTHDAY) |
+                       XURY_WEAPON_BIT(XURY_WEAPON_HOLE);
+    c.enable_sweet_aggressive = true;
+
+    TEST_ASSERT_EQ(xury_config_normalize(&c), XURY_OK);
+    TEST_ASSERT(xury_config_weapon_enabled(&c, XURY_WEAPON_BIRTHDAY));
+}
+
+static void test_normalize_sweet_needs_traversal(void)
+{
+    /*
+     * If neither HOLE nor PREDICT is enabled, sweet is disabled
+     * because it has no traversal to build on.
+     */
+    xury_config_t c = zero_cfg();
+    xury_config_apply_defaults(&c, &c);
+
+    c.enable_weapons = XURY_WEAPON_BIT(XURY_WEAPON_IPV6) |
+                       XURY_WEAPON_BIT(XURY_WEAPON_UPNP);
+    c.enable_sweet = true;
+
+    TEST_ASSERT_EQ(xury_config_normalize(&c), XURY_OK);
+    TEST_ASSERT(!c.enable_sweet);
+
+    /* Now enable HOLE: sweet stays on. */
+    c.enable_weapons |= XURY_WEAPON_BIT(XURY_WEAPON_HOLE);
+    c.enable_sweet = true;
+    TEST_ASSERT_EQ(xury_config_normalize(&c), XURY_OK);
+    TEST_ASSERT(c.enable_sweet);
+}
+
+static void test_normalize_upgrade_needs_relay(void)
+{
+    xury_config_t c = zero_cfg();
+    xury_config_apply_defaults(&c, &c);
+
+    c.enable_relay = false;
+    c.enable_relay_upgrade = true;
+
+    TEST_ASSERT_EQ(xury_config_normalize(&c), XURY_OK);
+    TEST_ASSERT(!c.enable_relay_upgrade);
+}
+
+static void test_normalize_disables_phases_when_no_weapons(void)
+{
+    xury_config_t c = zero_cfg();
+    xury_config_apply_defaults(&c, &c);
+
+    c.enable_weapons = 0u;
+    c.enable_strike = true;
+    c.enable_blitz  = true;
+
+    TEST_ASSERT_EQ(xury_config_normalize(&c), XURY_OK);
+    TEST_ASSERT(!c.enable_strike);
+    TEST_ASSERT(!c.enable_blitz);
+}
+
+static void test_normalize_is_idempotent(void)
+{
+    xury_config_t c = zero_cfg();
+    xury_config_apply_defaults(&c, &c);
+
+    TEST_ASSERT_EQ(xury_config_normalize(&c), XURY_OK);
+
+    /* Snapshot a few fields. */
+    uint32_t w = c.enable_weapons;
+    uint32_t s = c.scan_timeout_ms;
+    bool     e = c.enable_sweet;
+
+    TEST_ASSERT_EQ(xury_config_normalize(&c), XURY_OK);
+
+    TEST_ASSERT_EQ(c.enable_weapons, w);
+    TEST_ASSERT_EQ(c.scan_timeout_ms, s);
+    TEST_ASSERT_EQ(c.enable_sweet, e);
+}
+
+/*
+ * ============================================================================
+ * WEAPON ENABLED
+ * ============================================================================
+ */
+
+static void test_weapon_enabled_null(void)
+{
+    TEST_ASSERT(!xury_config_weapon_enabled(NULL, XURY_WEAPON_IPV6));
+}
+
+static void test_weapon_enabled_invalid(void)
+{
+    xury_config_t c = zero_cfg();
+    c.enable_weapons = XURY_DEFAULT_WEAPONS;
+    TEST_ASSERT(!xury_config_weapon_enabled(&c, XURY_WEAPON_NONE));
+    TEST_ASSERT(!xury_config_weapon_enabled(&c, (xury_weapon_t)999));
+}
+
+static void test_weapon_enabled_bit_set(void)
+{
+    xury_config_t c = zero_cfg();
+    c.enable_weapons = XURY_WEAPON_BIT(XURY_WEAPON_IPV6) |
+                       XURY_WEAPON_BIT(XURY_WEAPON_HOLE);
+
+    TEST_ASSERT(xury_config_weapon_enabled(&c, XURY_WEAPON_IPV6));
+    TEST_ASSERT(xury_config_weapon_enabled(&c, XURY_WEAPON_HOLE));
+    TEST_ASSERT(!xury_config_weapon_enabled(&c, XURY_WEAPON_UPNP));
+    TEST_ASSERT(!xury_config_weapon_enabled(&c, XURY_WEAPON_RELAY));
+}
+
+/*
+ * ============================================================================
+ * EFFECTIVE CONNECT TIMEOUT
+ * ============================================================================
+ */
+
+static void test_effective_timeout_null(void)
+{
+    uint32_t t = xury_config_effective_connect_timeout(NULL);
+    TEST_ASSERT_EQ(t, XURY_DEFAULT_CONNECT_TIMEOUT_MS);
+}
+
+static void test_effective_timeout_zero_uses_default(void)
+{
+    xury_config_t c = zero_cfg();
+    uint32_t t = xury_config_effective_connect_timeout(&c);
+    TEST_ASSERT_EQ(t, XURY_DEFAULT_CONNECT_TIMEOUT_MS);
+}
+
+static void test_effective_timeout_explicit(void)
+{
+    xury_config_t c = zero_cfg();
+    c.connect_timeout_ms = 45000u;
+    uint32_t t = xury_config_effective_connect_timeout(&c);
+    TEST_ASSERT_EQ(t, 45000u);
+}
+
+/*
+ * ============================================================================
+ * FINGERPRINT
+ * ============================================================================
+ */
+
+static void test_fingerprint_null_is_zero(void)
+{
+    TEST_ASSERT_EQ(xury_config_fingerprint(NULL), 0u);
+}
+
+static void test_fingerprint_deterministic(void)
+{
+    xury_config_t c = zero_cfg();
+    c.struct_version = XURY_CONFIG_VERSION;
+    c.enable_weapons = XURY_DEFAULT_WEAPONS;
+
+    uint64_t a = xury_config_fingerprint(&c);
+    uint64_t b = xury_config_fingerprint(&c);
+    TEST_ASSERT_EQ(a, b);
+    TEST_ASSERT(a != 0u);
+}
+
+static void test_fingerprint_changes_with_weapons(void)
+{
+    xury_config_t a = zero_cfg();
+    xury_config_t b = zero_cfg();
+
+    a.struct_version = XURY_CONFIG_VERSION;
+    b.struct_version = XURY_CONFIG_VERSION;
+
+    a.enable_weapons = XURY_WEAPON_BIT(XURY_WEAPON_IPV6);
+    b.enable_weapons = XURY_WEAPON_BIT(XURY_WEAPON_IPV6) |
+                       XURY_WEAPON_BIT(XURY_WEAPON_HOLE);
+
+    uint64_t fa = xury_config_fingerprint(&a);
+    uint64_t fb = xury_config_fingerprint(&b);
+    TEST_ASSERT_NE(fa, fb);
+}
+
+static void test_fingerprint_ignores_hooks(void)
+{
+    /*
+     * Hooks and their userdata must not affect the fingerprint:
+     * changing them must not invalidate the scan cache.
+     */
+    xury_config_t a = zero_cfg();
+    xury_config_t b = zero_cfg();
+
+    a.struct_version = XURY_CONFIG_VERSION;
+    b.struct_version = XURY_CONFIG_VERSION;
+
+    /* Same behavior fields. */
+    a.enable_weapons = b.enable_weapons = XURY_DEFAULT_WEAPONS;
+
+    /* Different hook pointers. */
+    a.on_log = (void (*)(int, const char *, void *))0x1;
+    a.log_userdata = (void *)0x1;
+    b.on_log = (void (*)(int, const char *, void *))0x2;
+    b.log_userdata = (void *)0x2;
+
+    uint64_t fa = xury_config_fingerprint(&a);
+    uint64_t fb = xury_config_fingerprint(&b);
+    TEST_ASSERT_EQ(fa, fb);
+}
+
+static void test_fingerprint_changes_with_timeout(void)
+{
+    xury_config_t a = zero_cfg();
+    xury_config_t b = zero_cfg();
+
+    a.struct_version = XURY_CONFIG_VERSION;
+    b.struct_version = XURY_CONFIG_VERSION;
+
+    a.scan_timeout_ms = 1000u;
+    b.scan_timeout_ms = 2000u;
+
+    TEST_ASSERT_NE(xury_config_fingerprint(&a),
+                   xury_config_fingerprint(&b));
+}
+
+static void test_fingerprint_changes_with_strategy(void)
+{
+    xury_config_t a = zero_cfg();
+    xury_config_t b = zero_cfg();
+
+    a.struct_version = XURY_CONFIG_VERSION;
+    b.struct_version = XURY_CONFIG_VERSION;
+
+    a.force_strategy = XURY_STRATEGY_AUTO;
+    b.force_strategy = XURY_STRATEGY_RELAY;
+
+    TEST_ASSERT_NE(xury_config_fingerprint(&a),
+                   xury_config_fingerprint(&b));
+}
+
+static void test_fingerprint_includes_interface(void)
+{
+    xury_config_t a = zero_cfg();
+    xury_config_t b = zero_cfg();
+
+    a.struct_version = XURY_CONFIG_VERSION;
+    b.struct_version = XURY_CONFIG_VERSION;
+
+    /* Same behavior, different interface name. */
+    memset(a.local_interface, 0, sizeof(a.local_interface));
+    memset(b.local_interface, 0, sizeof(b.local_interface));
+    strncpy(a.local_interface, "wlan0", sizeof(a.local_interface) - 1);
+    strncpy(b.local_interface, "eth0",  sizeof(b.local_interface) - 1);
+
+    TEST_ASSERT_NE(xury_config_fingerprint(&a),
+                   xury_config_fingerprint(&b));
+}
+
+/*
+ * ============================================================================
+ * RUNNER
+ * ============================================================================
+ */
+
+static void run_all_tests(void)
+{
+    /* Validate */
+    TEST_RUN(test_validate_null);
+    TEST_RUN(test_validate_zero_ok);
+    TEST_RUN(test_validate_explicit_version_ok);
+    TEST_RUN(test_validate_bad_struct_version);
+    TEST_RUN(test_validate_bad_strategy);
+    TEST_RUN(test_validate_weapon_mask_unknown_bit);
+    TEST_RUN(test_validate_weapon_mask_none_bit);
+    TEST_RUN(test_validate_weapon_mask_ok);
+    TEST_RUN(test_validate_timeout_too_small);
+    TEST_RUN(test_validate_timeout_too_large);
+    TEST_RUN(test_validate_timeout_ok);
+    TEST_RUN(test_validate_max_parallel_out_of_range);
+    TEST_RUN(test_validate_interface_not_terminated);
+    TEST_RUN(test_validate_allocator_partial);
+    TEST_RUN(test_validate_allocator_all_set);
+    TEST_RUN(test_validate_storage_partial);
+    TEST_RUN(test_validate_storage_both_set);
+
+    /* Defaults */
+    TEST_RUN(test_defaults_null_args);
+    TEST_RUN(test_defaults_zero_fills_everything);
+    TEST_RUN(test_defaults_preserves_explicit_values);
+    TEST_RUN(test_defaults_explicit_version_keeps_booleans_off);
+
+    /* Normalize */
+    TEST_RUN(test_normalize_null);
+    TEST_RUN(test_normalize_clamps_scan_timeout);
+    TEST_RUN(test_normalize_clamps_max_parallel);
+    TEST_RUN(test_normalize_aggressive_gate);
+    TEST_RUN(test_normalize_aggressive_allowed);
+    TEST_RUN(test_normalize_sweet_needs_traversal);
+    TEST_RUN(test_normalize_upgrade_needs_relay);
+    TEST_RUN(test_normalize_disables_phases_when_no_weapons);
+    TEST_RUN(test_normalize_is_idempotent);
+
+    /* Weapon enabled */
+    TEST_RUN(test_weapon_enabled_null);
+    TEST_RUN(test_weapon_enabled_invalid);
+    TEST_RUN(test_weapon_enabled_bit_set);
+
+    /* Effective timeout */
+    TEST_RUN(test_effective_timeout_null);
+    TEST_RUN(test_effective_timeout_zero_uses_default);
+    TEST_RUN(test_effective_timeout_explicit);
+
+    /* Fingerprint */
+    TEST_RUN(test_fingerprint_null_is_zero);
+    TEST_RUN(test_fingerprint_deterministic);
+    TEST_RUN(test_fingerprint_changes_with_weapons);
+    TEST_RUN(test_fingerprint_ignores_hooks);
+    TEST_RUN(test_fingerprint_changes_with_timeout);
+    TEST_RUN(test_fingerprint_changes_with_strategy);
+    TEST_RUN(test_fingerprint_includes_interface);
+}
+
+TEST_MAIN()
