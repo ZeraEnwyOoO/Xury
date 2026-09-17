@@ -1,1 +1,444 @@
+# ═══════════════════════════════════════════════════════════
+# XURY NAT ENGINE — .gitignore
+# ═══════════════════════════════════════════════════════════
+#
+# Scope    : NAT only
+# Platform : Linux + Android (plug-in ready)
+# Language : C (C11)
+# Build    : CMake
+#
+# ═══════════════════════════════════════════════════════════
 
+
+# ───────────────────────────────────────────────────────────
+# 1. BUILD ARTIFACTS
+# ───────────────────────────────────────────────────────────
+
+# CMake build directories
+build/
+build-*/
+cmake-build-*/
+out/
+_build/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+install_manifest.txt
+Makefile
+*.cmake
+!CMakeLists.txt
+!cmake/**/*.cmake
+!cmake/**/*.cmake.in
+
+# Compiled objects
+*.o
+*.obj
+*.lo
+*.la
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exp
+*.pdb
+*.ilk
+*.idb
+*.ko
+*.mod
+*.mod.c
+
+# Executables
+*.exe
+*.out
+*.app
+*.bin
+*.elf
+*.hex
+
+# Built libraries
+libxury.a
+libxury.so
+libxury.so.*
+libxury.dylib
+libxury.dll
+libxury.lib
+xury
+
+# Build logs
+*.log
+build.log
+compile_commands.json
+
+
+# ───────────────────────────────────────────────────────────
+# 2. CMAKE-SPECIFIC
+# ───────────────────────────────────────────────────────────
+
+CMakeUserPresets.json
+CMakePresets.json.user
+
+# Generated package config
+xury-config.cmake
+xury-config-version.cmake
+xury-targets.cmake
+xury-targets-*.cmake
+
+
+# ───────────────────────────────────────────────────────────
+# 3. ANDROID NDK BUILD
+# ───────────────────────────────────────────────────────────
+
+# NDK build directories
+build-android/
+build-android-*/
+obj/
+libs/
+jniLibs/
+.aar
+.apk
+.ap_
+.idea/
+
+# Gradle
+.gradle/
+gradle/
+gradlew
+gradlew.bat
+local.properties
+
+# Android Studio
+*.iml
+*.hprof
+captures/
+.externalNativeBuild/
+.cxx/
+
+# NDK local properties
+local.properties
+
+# Android build outputs
+build/outputs/
+build/intermediates/
+
+
+# ───────────────────────────────────────────────────────────
+# 4. TEST & COVERAGE
+# ───────────────────────────────────────────────────────────
+
+Testing/
+test-results/
+*.test
+*.gcda
+*.gcno
+*.gcov
+
+coverage/
+*.info
+*.profraw
+*.profdata
+lcov.info
+
+
+# ───────────────────────────────────────────────────────────
+# 5. XURY RUNTIME ARTIFACTS
+# ───────────────────────────────────────────────────────────
+# Runtime files produced by Xury during testing.
+# Per-machine data — must NOT be committed.
+
+*.xury-cache
+.xury/
+.xury/cache/
+.xury/storage/
+*.xury-store
+
+# Xury logs
+xury.log
+xury-*.log
+
+# Xury test captures
+*.xury-cap
+captures/
+pcap/
+*.pcap
+*.pcapng
+
+
+# ───────────────────────────────────────────────────────────
+# 6. IDE — VISUAL STUDIO CODE
+# ───────────────────────────────────────────────────────────
+
+.vscode/
+!.vscode/settings.json.example
+!.vscode/launch.json.example
+!.vscode/tasks.json.example
+*.code-workspace
+
+
+# ───────────────────────────────────────────────────────────
+# 7. IDE — CLION / JETBRAINS
+# ───────────────────────────────────────────────────────────
+
+.idea/
+*.iml
+*.ipr
+*.iws
+
+
+# ───────────────────────────────────────────────────────────
+# 8. IDE — ECLIPSE
+# ───────────────────────────────────────────────────────────
+
+.project
+.cproject
+.settings/
+.classpath
+
+
+# ───────────────────────────────────────────────────────────
+# 9. IDE — VISUAL STUDIO
+# ───────────────────────────────────────────────────────────
+
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+Debug/
+Release/
+x64/
+x86/
+
+
+# ───────────────────────────────────────────────────────────
+# 10. EDITOR — VIM / NEOVIM
+# ───────────────────────────────────────────────────────────
+
+*.swp
+*.swo
+*.swn
+.*.sw?
+Session.vim
+.netrwhist
+tags
+!tags.example
+
+
+# ───────────────────────────────────────────────────────────
+# 11. EDITOR — EMACS
+# ───────────────────────────────────────────────────────────
+
+*~
+\#*\#
+.\#*
+.#*
+*.elc
+
+
+# ───────────────────────────────────────────────────────────
+# 12. EDITOR — SUBLIME TEXT
+# ───────────────────────────────────────────────────────────
+
+*.sublime-project
+*.sublime-workspace
+
+
+# ───────────────────────────────────────────────────────────
+# 13. OS — macOS
+# ───────────────────────────────────────────────────────────
+
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Icon?
+.fseventsd
+.AppleDouble
+.LSOverride
+
+
+# ───────────────────────────────────────────────────────────
+# 14. OS — WINDOWS
+# ───────────────────────────────────────────────────────────
+
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+
+# ───────────────────────────────────────────────────────────
+# 15. OS — LINUX
+# ───────────────────────────────────────────────────────────
+
+*~
+.directory
+.Trash-*
+.nfs*
+
+
+# ───────────────────────────────────────────────────────────
+# 16. TEMP FILES
+# ───────────────────────────────────────────────────────────
+
+*.tmp
+*.temp
+*.bak
+*.backup
+*.orig
+*.rej
+*.pid
+*.seed
+*.pid.lock
+*.stackdump
+core
+core.*
+vgcore.*
+
+
+# ───────────────────────────────────────────────────────────
+# 17. TOOLS
+# ───────────────────────────────────────────────────────────
+
+# clang-format backup
+*.clang-format.bak
+
+# ctags / cscope
+cscope.out
+cscope.in.out
+cscope.po.out
+cscope.files
+TAGS
+
+# gdb
+.gdb_history
+
+# valgrind
+valgrind.log
+
+# strace / ltrace
+strace.txt
+ltrace.txt
+
+# perf
+perf.data
+perf.data.old
+
+
+# ───────────────────────────────────────────────────────────
+# 18. DOCS BUILD
+# ───────────────────────────────────────────────────────────
+
+docs/_build/
+docs/html/
+docs/latex/
+docs/xml/
+doxygen-warnings.log
+
+
+# ───────────────────────────────────────────────────────────
+# 19. PACKAGE MANAGERS
+# ───────────────────────────────────────────────────────────
+
+# vcpkg
+vcpkg_installed/
+vcpkg-manifest-install.log
+
+# Conan
+conanbuildinfo.cmake
+conaninfo.txt
+graph_info.json
+.conan/
+
+# apt
+*.deb
+
+# Homebrew
+*.brew.lock
+
+
+# ───────────────────────────────────────────────────────────
+# 20. SECRETS & LOCAL CONFIG
+# ───────────────────────────────────────────────────────────
+# Never commit secrets, keys, or local-only config.
+
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+secrets/
+.env
+.env.*
+!.env.example
+local.mk
+local.cmake
+Makefile.local
+CMakeLists.local.txt
+
+
+# ───────────────────────────────────────────────────────────
+# 21. CI / CD
+# ───────────────────────────────────────────────────────────
+
+# GitHub Actions local runs
+.act/
+.actrc
+
+# GitLab CI local runs
+.gitlab-ci-local/
+
+# Travis
+.travis.yml.bak
+
+
+# ───────────────────────────────────────────────────────────
+# 22. BENCHMARK OUTPUT
+# ───────────────────────────────────────────────────────────
+
+benchmark/
+benchmarks/results/
+*.bench
+*.benchmark
+bench.out
+
+
+# ───────────────────────────────────────────────────────────
+# 23. MISC
+# ───────────────────────────────────────────────────────────
+
+# Scratch
+scratch/
+tmp/
+temp/
+*.scratch
+
+# Archive
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+*.rar
+*.gz
+*.bz2
+*.xz
+
+# Dependency directories
+# Xury is libc-only — but included for safety.
+vendor/
+third_party/
+!third_party/.gitkeep
+
+
+# ═══════════════════════════════════════════════════════════
+# END OF .gitignore
+# ═══════════════════════════════════════════════════════════
