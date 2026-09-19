@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -43,14 +43,15 @@
 #include <xury/err.h>
 
 #include "core/internal/sock.h"
+#include "platform/platform.h"
 
 /*
  * ============================================================================
  * PLATFORM HOOKS (Phase D)
  * ============================================================================
  *
- * Declared weak so this file links without Phase D. Phase D will
- * provide strong definitions with the same signatures.
+ * Declared weak so this file links without Phase D. Phase D provides
+ * strong definitions with the same signatures.
  */
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -63,7 +64,7 @@ XURY_WEAK xury_err_t xury_platform_sock_init(void);
 XURY_WEAK void       xury_platform_sock_shutdown(void);
 
 XURY_WEAK xury_err_t xury_platform_sock_create(xury_family_t family,
-                                               xury_sock_type_t type,
+                                               xury_platform_sock_type_t type,
                                                xury_sock_t *out);
 XURY_WEAK xury_err_t xury_platform_sock_close(xury_sock_t s);
 
@@ -104,11 +105,6 @@ XURY_WEAK xury_err_t xury_platform_sock_wait_readable(xury_sock_t s,
  * ============================================================================
  * PRESENCE TEST
  * ============================================================================
- *
- * GNU/Clang: a weak symbol that was not provided by any translation
- * unit reads as NULL, so we can test it directly.
- *
- * Other toolchains: we assume Phase D is present at link time.
  */
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -198,7 +194,9 @@ xury_err_t xury_sock_create(xury_family_t family,
         return XURY_ERR_NOT_IMPLEMENTED;
     }
 #endif
-    return xury_platform_sock_create(family, type, out);
+    return xury_platform_sock_create(family,
+                                     (xury_platform_sock_type_t)type,
+                                     out);
 }
 
 xury_err_t xury_sock_close(xury_sock_t s)
@@ -248,7 +246,6 @@ xury_err_t xury_sock_local(xury_sock_t s, xury_endpoint_t *out)
 #endif
     return xury_platform_sock_local(s, out);
 }
- /* ---- continued from part 1/2 ---- */
 
 /*
  * ============================================================================
