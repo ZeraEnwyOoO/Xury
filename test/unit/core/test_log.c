@@ -43,7 +43,7 @@
 
 #include <xury/xury.h>
 #include "core/internal/log.h"
-#include "tests/test.h"
+#include "test/test.h"
 
 /*
  * ============================================================================
