@@ -29,7 +29,7 @@
 
 #include <xury/xury.h>
 #include "api/internal/config.h"
-#include "tests/test.h"
+#include "test/test.h"
 
 static xury_config_t zero_cfg(void)
 {
