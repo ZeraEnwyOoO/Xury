@@ -68,7 +68,7 @@
 
 #include <xury/xury.h>
 #include "api/internal/types.h"
-#include "tests/test.h"
+#include "test/test.h"
 
 /*
  * ============================================================================
