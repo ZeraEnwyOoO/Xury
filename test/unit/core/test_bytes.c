@@ -49,7 +49,7 @@
 
 #include <xury/xury.h>
 #include "core/internal/bytes.h"
-#include "tests/test.h"
+#include "test/test.h"
 
 /*
  * ============================================================================
