@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -20,19 +20,6 @@
  * ============================================================================
  * TESTS — src/api/config.c
  * ============================================================================
- *
- * Exercise the internal config helpers:
- *
- *   xury_config_validate()
- *   xury_config_apply_defaults()
- *   xury_config_normalize()
- *   xury_config_weapon_enabled()
- *   xury_config_effective_connect_timeout()
- *   xury_config_fingerprint()
- *
- * The tests build configs from scratch, mutate a single field, and
- * assert the exact behavior. No mocks, no fakes.
- * ============================================================================
  */
 
 #include <stdint.h>
@@ -42,15 +29,8 @@
 
 #include <xury/xury.h>
 #include "api/internal/config.h"
-#include "test/test.h"
+#include "tests/test.h"
 
-/*
- * ----------------------------------------------------------------------------
- * Helper: a fully zeroed config.
- * ----------------------------------------------------------------------------
- * Zero means "use defaults" for every field, which is exactly the
- * contract we want to verify.
- */
 static xury_config_t zero_cfg(void)
 {
     xury_config_t c;
@@ -58,10 +38,6 @@ static xury_config_t zero_cfg(void)
     return c;
 }
 
-/*
- * Helper: a config with an explicit struct_version so it is NOT
- * treated as "all zero".
- */
 static xury_config_t explicit_cfg(void)
 {
     xury_config_t c;
@@ -70,11 +46,9 @@ static xury_config_t explicit_cfg(void)
     return c;
 }
 
-/*
- * ============================================================================
+/* ─────────────────────────────────────────────
  * VALIDATE
- * ============================================================================
- */
+ * ───────────────────────────────────────────── */
 
 static void test_validate_null(void)
 {
@@ -83,7 +57,6 @@ static void test_validate_null(void)
 
 static void test_validate_zero_ok(void)
 {
-    /* All-zero is explicitly allowed: it means "all defaults". */
     xury_config_t c = zero_cfg();
     TEST_ASSERT_EQ(xury_config_validate(&c), XURY_OK);
 }
@@ -111,7 +84,6 @@ static void test_validate_bad_strategy(void)
 static void test_validate_weapon_mask_unknown_bit(void)
 {
     xury_config_t c = zero_cfg();
-    /* Set a bit far above XURY_WEAPON_COUNT. */
     c.enable_weapons = 1u << 31;
     TEST_ASSERT_EQ(xury_config_validate(&c), XURY_ERR_INVAL);
 }
@@ -119,7 +91,6 @@ static void test_validate_weapon_mask_unknown_bit(void)
 static void test_validate_weapon_mask_none_bit(void)
 {
     xury_config_t c = zero_cfg();
-    /* Bit 0 is XURY_WEAPON_NONE, which must never be set. */
     c.enable_weapons = 1u << 0;
     TEST_ASSERT_EQ(xury_config_validate(&c), XURY_ERR_INVAL);
 }
@@ -135,14 +106,14 @@ static void test_validate_weapon_mask_ok(void)
 static void test_validate_timeout_too_small(void)
 {
     xury_config_t c = zero_cfg();
-    c.scan_timeout_ms = 1u;   /* below MIN_SCAN_MS */
+    c.scan_timeout_ms = 1u;
     TEST_ASSERT_EQ(xury_config_validate(&c), XURY_ERR_INVAL);
 }
 
 static void test_validate_timeout_too_large(void)
 {
     xury_config_t c = zero_cfg();
-    c.connect_timeout_ms = 0xFFFFFFFFu;   /* above MAX */
+    c.connect_timeout_ms = 0xFFFFFFFFu;
     TEST_ASSERT_EQ(xury_config_validate(&c), XURY_ERR_INVAL);
 }
 
@@ -164,7 +135,6 @@ static void test_validate_max_parallel_out_of_range(void)
 static void test_validate_interface_not_terminated(void)
 {
     xury_config_t c = zero_cfg();
-    /* Fill with non-NUL bytes. */
     for (size_t i = 0; i < sizeof(c.local_interface); i++) {
         c.local_interface[i] = 'x';
     }
@@ -176,7 +146,6 @@ static void test_validate_allocator_partial(void)
     xury_config_t c = zero_cfg();
     xury_allocator_t a;
     memset(&a, 0, sizeof(a));
-    /* Only malloc set: must be rejected. */
     a.malloc_fn = (void *(*)(size_t))0x1;
     c.allocator = &a;
     TEST_ASSERT_EQ(xury_config_validate(&c), XURY_ERR_INVAL);
@@ -199,7 +168,6 @@ static void test_validate_storage_partial(void)
     xury_config_t c = zero_cfg();
     xury_storage_iface_t s;
     memset(&s, 0, sizeof(s));
-    /* Only load set: must be rejected. */
     s.load = (int (*)(void *, uint8_t *, size_t *))0x1;
     c.storage = &s;
     TEST_ASSERT_EQ(xury_config_validate(&c), XURY_ERR_INVAL);
@@ -216,11 +184,9 @@ static void test_validate_storage_both_set(void)
     TEST_ASSERT_EQ(xury_config_validate(&c), XURY_OK);
 }
 
-/*
- * ============================================================================
+/* ─────────────────────────────────────────────
  * APPLY DEFAULTS
- * ============================================================================
- */
+ * ───────────────────────────────────────────── */
 
 static void test_defaults_null_args(void)
 {
@@ -236,13 +202,9 @@ static void test_defaults_zero_fills_everything(void)
 
     TEST_ASSERT_EQ(xury_config_apply_defaults(&in, &out), XURY_OK);
 
-    /* struct_version filled in. */
     TEST_ASSERT_EQ(out.struct_version, XURY_CONFIG_VERSION);
-
-    /* Weapons defaulted. */
     TEST_ASSERT_EQ(out.enable_weapons, XURY_DEFAULT_WEAPONS);
 
-    /* Timeouts defaulted. */
     TEST_ASSERT_EQ(out.scan_timeout_ms,    XURY_DEFAULT_SCAN_TIMEOUT_MS);
     TEST_ASSERT_EQ(out.sensing_timeout_ms, XURY_DEFAULT_SENSING_TIMEOUT_MS);
     TEST_ASSERT_EQ(out.probing_timeout_ms, XURY_DEFAULT_PROBING_TIMEOUT_MS);
@@ -258,7 +220,6 @@ static void test_defaults_zero_fills_everything(void)
     TEST_ASSERT_EQ(out.learning_min_samples,
                    XURY_DEFAULT_LEARNING_MIN_SAMPLES);
 
-    /* Booleans enabled when the input was all-zero. */
     TEST_ASSERT(out.enable_scan);
     TEST_ASSERT(out.enable_strike);
     TEST_ASSERT(out.enable_blitz);
@@ -290,10 +251,6 @@ static void test_defaults_preserves_explicit_values(void)
 
 static void test_defaults_explicit_version_keeps_booleans_off(void)
 {
-    /*
-     * With an explicit struct_version, the booleans are taken as the
-     * caller wrote them. An explicit_version config has them all off.
-     */
     xury_config_t in  = explicit_cfg();
     xury_config_t out = zero_cfg();
 
@@ -304,13 +261,9 @@ static void test_defaults_explicit_version_keeps_booleans_off(void)
     TEST_ASSERT(!out.enable_blitz);
 }
 
- /* ---- continued from part 1/2 ---- */
-
-/*
- * ============================================================================
+/* ─────────────────────────────────────────────
  * NORMALIZE
- * ============================================================================
- */
+ * ───────────────────────────────────────────── */
 
 static void test_normalize_null(void)
 {
@@ -319,7 +272,6 @@ static void test_normalize_null(void)
 
 static void test_normalize_clamps_scan_timeout(void)
 {
-    /* Build a config with a value above MAX and confirm it's clamped. */
     xury_config_t in  = zero_cfg();
     xury_config_t out = zero_cfg();
 
@@ -328,7 +280,6 @@ static void test_normalize_clamps_scan_timeout(void)
     TEST_ASSERT_EQ(xury_config_normalize(&out), XURY_OK);
     TEST_ASSERT_EQ(out.scan_timeout_ms, XURY_CONFIG_MAX_SCAN_MS);
 
-    /* Below MIN. */
     in.scan_timeout_ms = 1u;
     TEST_ASSERT_EQ(xury_config_apply_defaults(&in, &out), XURY_OK);
     TEST_ASSERT_EQ(xury_config_normalize(&out), XURY_OK);
@@ -349,10 +300,6 @@ static void test_normalize_clamps_max_parallel(void)
 
 static void test_normalize_aggressive_gate(void)
 {
-    /*
-     * BIRTHDAY and UPGRADE must be cleared unless the host opted in
-     * via enable_sweet_aggressive.
-     */
     xury_config_t c = zero_cfg();
     xury_config_apply_defaults(&c, &c);
 
@@ -383,10 +330,6 @@ static void test_normalize_aggressive_allowed(void)
 
 static void test_normalize_sweet_needs_traversal(void)
 {
-    /*
-     * If neither HOLE nor PREDICT is enabled, sweet is disabled
-     * because it has no traversal to build on.
-     */
     xury_config_t c = zero_cfg();
     xury_config_apply_defaults(&c, &c);
 
@@ -397,7 +340,6 @@ static void test_normalize_sweet_needs_traversal(void)
     TEST_ASSERT_EQ(xury_config_normalize(&c), XURY_OK);
     TEST_ASSERT(!c.enable_sweet);
 
-    /* Now enable HOLE: sweet stays on. */
     c.enable_weapons |= XURY_WEAPON_BIT(XURY_WEAPON_HOLE);
     c.enable_sweet = true;
     TEST_ASSERT_EQ(xury_config_normalize(&c), XURY_OK);
@@ -437,7 +379,6 @@ static void test_normalize_is_idempotent(void)
 
     TEST_ASSERT_EQ(xury_config_normalize(&c), XURY_OK);
 
-    /* Snapshot a few fields. */
     uint32_t w = c.enable_weapons;
     uint32_t s = c.scan_timeout_ms;
     bool     e = c.enable_sweet;
@@ -449,11 +390,9 @@ static void test_normalize_is_idempotent(void)
     TEST_ASSERT_EQ(c.enable_sweet, e);
 }
 
-/*
- * ============================================================================
+/* ─────────────────────────────────────────────
  * WEAPON ENABLED
- * ============================================================================
- */
+ * ───────────────────────────────────────────── */
 
 static void test_weapon_enabled_null(void)
 {
@@ -480,11 +419,9 @@ static void test_weapon_enabled_bit_set(void)
     TEST_ASSERT(!xury_config_weapon_enabled(&c, XURY_WEAPON_RELAY));
 }
 
-/*
- * ============================================================================
+/* ─────────────────────────────────────────────
  * EFFECTIVE CONNECT TIMEOUT
- * ============================================================================
- */
+ * ───────────────────────────────────────────── */
 
 static void test_effective_timeout_null(void)
 {
@@ -507,11 +444,9 @@ static void test_effective_timeout_explicit(void)
     TEST_ASSERT_EQ(t, 45000u);
 }
 
-/*
- * ============================================================================
+/* ─────────────────────────────────────────────
  * FINGERPRINT
- * ============================================================================
- */
+ * ───────────────────────────────────────────── */
 
 static void test_fingerprint_null_is_zero(void)
 {
@@ -549,23 +484,17 @@ static void test_fingerprint_changes_with_weapons(void)
 
 static void test_fingerprint_ignores_hooks(void)
 {
-    /*
-     * Hooks and their userdata must not affect the fingerprint:
-     * changing them must not invalidate the scan cache.
-     */
     xury_config_t a = zero_cfg();
     xury_config_t b = zero_cfg();
 
     a.struct_version = XURY_CONFIG_VERSION;
     b.struct_version = XURY_CONFIG_VERSION;
 
-    /* Same behavior fields. */
     a.enable_weapons = b.enable_weapons = XURY_DEFAULT_WEAPONS;
 
-    /* Different hook pointers. */
-    a.on_log = (void (*)(int, const char *, void *))0x1;
+    a.on_log = (void (*)(xury_log_level_t, const char *, void *))0x1;
     a.log_userdata = (void *)0x1;
-    b.on_log = (void (*)(int, const char *, void *))0x2;
+    b.on_log = (void (*)(xury_log_level_t, const char *, void *))0x2;
     b.log_userdata = (void *)0x2;
 
     uint64_t fa = xury_config_fingerprint(&a);
@@ -611,7 +540,6 @@ static void test_fingerprint_includes_interface(void)
     a.struct_version = XURY_CONFIG_VERSION;
     b.struct_version = XURY_CONFIG_VERSION;
 
-    /* Same behavior, different interface name. */
     memset(a.local_interface, 0, sizeof(a.local_interface));
     memset(b.local_interface, 0, sizeof(b.local_interface));
     strncpy(a.local_interface, "wlan0", sizeof(a.local_interface) - 1);
@@ -621,11 +549,9 @@ static void test_fingerprint_includes_interface(void)
                    xury_config_fingerprint(&b));
 }
 
-/*
- * ============================================================================
+/* ─────────────────────────────────────────────
  * RUNNER
- * ============================================================================
- */
+ * ───────────────────────────────────────────── */
 
 static void run_all_tests(void)
 {
