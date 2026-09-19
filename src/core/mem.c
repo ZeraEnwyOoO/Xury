@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -46,9 +46,6 @@
  * ============================================================================
  * INTERNAL HELPERS
  * ============================================================================
- *
- * These resolve the allocator once, so every public entry point does
- * not have to repeat the NULL check.
  */
 
 static void *mem_sys_alloc(size_t n)
@@ -109,22 +106,6 @@ static void mem_stats_on_alloc(size_t n)
     g_mem_stats.live_bytes += (uint64_t)n;
     if (g_mem_stats.live_bytes > g_mem_stats.peak_bytes) {
         g_mem_stats.peak_bytes = g_mem_stats.live_bytes;
-    }
-}
-
-/*
- * Track a successful free of a block that was n bytes when it was
- * handed out. We do not know the real size here, so callers pass the
- * size they requested. This keeps live_bytes accurate for the common
- * case.
- */
-static void mem_stats_on_free(size_t n)
-{
-    g_mem_stats.free_calls++;
-    if ((uint64_t)n <= g_mem_stats.live_bytes) {
-        g_mem_stats.live_bytes -= (uint64_t)n;
-    } else {
-        g_mem_stats.live_bytes = 0;
     }
 }
 
@@ -250,8 +231,6 @@ xury_err_t xury_mem_size_add_mul(size_t a, size_t b, size_t c, size_t *out)
     }
     return xury_mem_size_add(a, prod, out);
 }
-
-/* ---- continued from part 1/2 ---- */
 
 /*
  * ============================================================================
