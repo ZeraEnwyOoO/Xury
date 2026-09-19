@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -35,6 +35,7 @@
  *
  * Types defined here:
  *   xury_engine_t        — opaque engine handle
+ *   xury_family_t        — IPv4 / IPv6
  *   xury_endpoint_t      — IP + port (v4 or v6)
  *   xury_peer_id_t       — 256-bit opaque peer identifier
  *   xury_nat_type_t      — NAT classification
@@ -43,8 +44,14 @@
  *   xury_phase_t         — scan / strike / blitz
  *   xury_weapon_t        — NAT traversal weapon
  *   xury_strategy_t      — high-level strategy
- *   xury_sock_t          — socket handle (OS-agnostic)
  *   xury_network_type_t  — WiFi / cellular / ethernet
+ *   xury_sock_t          — socket handle (OS-agnostic)
+ *   xury_mirror_probe_t  — opaque
+ *   xury_mirror_response_t — opaque
+ *   xury_time_ms_t       — monotonic time
+ *   xury_allocator_t     — custom allocator
+ *   xury_storage_iface_t — host storage
+ *   xury_log_level_t     — log severity levels
  *
  * ============================================================================
  */
@@ -63,17 +70,6 @@ extern "C" {
  * ============================================================================
  * OPAQUE ENGINE HANDLE
  * ============================================================================
- *
- * The engine is a black box to the host.
- *
- * Host code:
- *   xury_engine_t *e = xury_create(&cfg);
- *   xury_start(e);
- *   ...
- *   xury_destroy(e);
- *
- * The struct definition lives in src/engine/engine_internal.h and is
- * never exposed in public headers.
  */
 
 typedef struct xury_engine xury_engine_t;
@@ -82,8 +78,6 @@ typedef struct xury_engine xury_engine_t;
  * ============================================================================
  * NETWORK FAMILY
  * ============================================================================
- *
- * Explicit family marker for endpoints.
  *
  * Values match AF_INET / AF_INET6 numerically on all supported
  * platforms so that no translation is needed in the platform layer.
@@ -100,21 +94,8 @@ typedef enum {
  * ENDPOINT
  * ============================================================================
  *
- * An IP address + port.
- *
- * ip[] is a text representation. Maximum length:
- *   - IPv4: "255.255.255.255"     = 15 chars + NUL = 16
- *   - IPv6: "xxxx:xxxx:...:xxxx"  = up to 45 chars + NUL = 46
- *   - IPv4-mapped IPv6 form also fits in 46
- *
- * Storage size chosen to hold the largest textual form including
- * a trailing NUL byte, so ip[] can always be printed directly.
- *
- * Rules:
- *   - If family == XURY_AF_UNSPEC, the endpoint is "empty".
- *   - If family == XURY_AF_INET,   only ip[0..15] is meaningful.
- *   - If family == XURY_AF_INET6,  full ip[] may be used.
- *   - port is in host byte order (NOT network byte order).
+ * ip[] holds a textual address (IPv4 or IPv6).
+ * port is in host byte order.
  */
 
 #define XURY_ENDPOINT_IP_MAX 46
@@ -131,18 +112,7 @@ typedef struct {
  * ============================================================================
  *
  * 256-bit opaque peer identifier.
- *
- * Content is defined by the host product (e.g., a public key hash).
- * Xury treats it as an opaque 32-byte blob used only for:
- *   - logging
- *   - cache keying
- *   - matching peers between calls
- *
- * Xury never inspects individual bytes.
- *
- * Rules:
- *   - All 32 bytes are significant.
- *   - All-zero is a valid but "unset" value.
+ * Content is defined by the host product.
  */
 
 #define XURY_PEER_ID_SIZE 32
@@ -155,23 +125,6 @@ typedef struct {
  * ============================================================================
  * NAT TYPE
  * ============================================================================
- *
- * RFC 3489 / RFC 4787 classification of the NAT observed on the local
- * network.
- *
- * Determined by the scan phase using port probes, peer-as-mirror
- * observations, and UPnP/NAT-PMP responses.
- *
- * Values:
- *   NONE             — No NAT (public IP or IPv6 global)
- *   FULL_CONE        — Endpoint-independent mapping + filtering
- *   RESTRICTED       — Address-restricted cone
- *   PORT_RESTRICTED  — Address + port restricted cone
- *   SYMMETRIC        — Endpoint-dependent mapping
- *   CGNAT            — Carrier-grade NAT (ISP-level)
- *   UNKNOWN          — Could not determine
- *
- * Used by the analysis phase to choose the best weapon.
  */
 
 typedef enum {
@@ -188,18 +141,6 @@ typedef enum {
  * ============================================================================
  * NAT LABEL
  * ============================================================================
- *
- * Coarse label derived from xury_nat_type_t.
- *
- * The label drives strategy selection in the orchestrator.
- * It is intentionally simple so that host code can reason about it.
- *
- * Mapping:
- *   EASY    <- NONE, FULL_CONE
- *   MEDIUM  <- RESTRICTED, PORT_RESTRICTED
- *   HARD    <- SYMMETRIC
- *   CGNAT   <- CGNAT
- *   UNKNOWN <- UNKNOWN
  */
 
 typedef enum {
@@ -214,19 +155,6 @@ typedef enum {
  * ============================================================================
  * CGNAT TYPE
  * ============================================================================
- *
- * Sub-classification of carrier-grade NAT, determined by observing
- * external port allocation behavior over multiple probes.
- *
- * Values:
- *   NONE      — Not behind CGNAT
- *   SIMPLE    — Sequential port allocation (predictable)
- *   HASH      — Constant-delta or hash-like allocation (predictable)
- *   RANDOM    — Random port allocation (birthday paradox only)
- *   STRICT    — No observable pattern, no outbound freedom
- *   UNKNOWN   — Could not determine
- *
- * Only meaningful when xury_nat_type_t == XURY_NAT_CGNAT.
  */
 
 typedef enum {
@@ -242,19 +170,6 @@ typedef enum {
  * ============================================================================
  * WEAPON
  * ============================================================================
- *
- * A single NAT traversal technique.
- *
- * Weapons are selected by the orchestrator based on scan results.
- * Multiple weapons may be attempted (strike), or all at once (blitz).
- *
- * Values are stable and must not be renumbered across releases.
- *
- * Categories:
- *   Direct:      IPV6, LAN
- *   Router:      UPNP, NATPMP, PCP
- *   Traversal:   HOLE, PREDICT, BIRTHDAY
- *   Peer:        MIRROR, RELAY, UPGRADE
  */
 
 typedef enum {
@@ -284,7 +199,7 @@ typedef enum {
 } xury_weapon_t;
 
 /*
- * Weapon bitmask for enabling/disabling sets of weapons in config.
+ * Weapon bitmask helpers.
  */
 
 #define XURY_WEAPON_BIT(w)     (1u << (w))
@@ -294,42 +209,26 @@ typedef enum {
  * ============================================================================
  * STRATEGY
  * ============================================================================
- *
- * High-level plan chosen by the orchestrator.
- *
- * A strategy is a named sequence of weapons with a shared goal.
- * The host may override the strategy in config.
  */
 
 typedef enum {
-    XURY_STRATEGY_AUTO    = 0,  /* engine chooses */
-    XURY_STRATEGY_IPV6    = 1,  /* force IPv6 direct */
-    XURY_STRATEGY_LAN     = 2,  /* force LAN direct */
-    XURY_STRATEGY_UPNP    = 3,  /* force UPnP mapping */
-    XURY_STRATEGY_NATPMP  = 4,  /* force NAT-PMP mapping */
-    XURY_STRATEGY_PCP     = 5,  /* force PCP mapping */
-    XURY_STRATEGY_PUNCH   = 6,  /* force hole punch */
-    XURY_STRATEGY_PREDICT = 7,  /* force port prediction */
-    XURY_STRATEGY_MIRROR  = 8,  /* force peer-as-mirror */
-    XURY_STRATEGY_RELAY   = 9,  /* force peer relay */
-    XURY_STRATEGY_BLITZ   = 10, /* force blitz (all weapons) */
+    XURY_STRATEGY_AUTO    = 0,
+    XURY_STRATEGY_IPV6    = 1,
+    XURY_STRATEGY_LAN     = 2,
+    XURY_STRATEGY_UPNP    = 3,
+    XURY_STRATEGY_NATPMP  = 4,
+    XURY_STRATEGY_PCP     = 5,
+    XURY_STRATEGY_PUNCH   = 6,
+    XURY_STRATEGY_PREDICT = 7,
+    XURY_STRATEGY_MIRROR  = 8,
+    XURY_STRATEGY_RELAY   = 9,
+    XURY_STRATEGY_BLITZ   = 10,
 } xury_strategy_t;
 
 /*
  * ============================================================================
  * PHASE
  * ============================================================================
- *
- * The three pillars of Xury, as observed by the host through callbacks.
- *
- *   SCAN   — analyze network, classify NAT, pick weapon
- *   STRIKE — try the best weapon (single, fast)
- *   BLITZ  — try all weapons in parallel (last resort)
- *
- * Additionally:
- *   IDLE   — before scan starts
- *   DONE   — connected successfully
- *   FAILED — no method worked
  */
 
 typedef enum {
@@ -345,13 +244,6 @@ typedef enum {
  * ============================================================================
  * NETWORK TYPE
  * ============================================================================
- *
- * Local network interface type, used to tune timeouts and behaviors.
- *
- * Determined during sensing (Linux: rtnetlink; Android: ConnectivityManager
- * via JNI).
- *
- * If unknown, defaults to ETHERNET with conservative timeouts.
  */
 
 typedef enum {
@@ -365,10 +257,28 @@ typedef enum {
 
 /*
  * ============================================================================
- * SOCKET HANDLE
+ * LOG LEVEL
  * ============================================================================
  *
- * OS-agnostic socket handle.
+ * Severity levels passed to the log hook. Values match the syslog-like
+ * ordering used throughout Xury (0 = most verbose, 4 = most severe).
+ *
+ * Defined here (rather than in hooks.h) so that both config.h and
+ * hooks.h can use it without a circular include.
+ */
+
+typedef enum {
+    XURY_LOG_TRACE = 0,
+    XURY_LOG_DEBUG = 1,
+    XURY_LOG_INFO  = 2,
+    XURY_LOG_WARN  = 3,
+    XURY_LOG_ERROR = 4,
+} xury_log_level_t;
+
+/*
+ * ============================================================================
+ * SOCKET HANDLE
+ * ============================================================================
  *
  * On Linux and Android this is a file descriptor (int).
  * On Windows it will wrap a SOCKET later. The typedef keeps host code
@@ -383,14 +293,8 @@ typedef int xury_sock_t;
 
 /*
  * ============================================================================
- * MIRROR PROBE / RESPONSE (opaque, for peer-as-mirror)
+ * OPAQUE MIRROR STRUCTS
  * ============================================================================
- *
- * Wire format is defined in src/peer/mirror.h. Public code only needs
- * the endpoint that the peer reported back.
- *
- * The structs are exposed as forward declarations so that the host can
- * store them but cannot depend on their layout.
  */
 
 typedef struct xury_mirror_probe    xury_mirror_probe_t;
@@ -400,11 +304,6 @@ typedef struct xury_mirror_response xury_mirror_response_t;
  * ============================================================================
  * TIME
  * ============================================================================
- *
- * Milliseconds since an unspecified monotonic epoch.
- *
- * Not wall-clock time. Not comparable across processes.
- * Only for measuring durations inside one process.
  */
 
 typedef uint64_t xury_time_ms_t;
@@ -413,14 +312,6 @@ typedef uint64_t xury_time_ms_t;
  * ============================================================================
  * ALLOCATOR
  * ============================================================================
- *
- * Optional custom allocator.
- *
- * If any pointer is NULL, the default (malloc/realloc/free) is used.
- * All three must be provided together, or none.
- *
- * Used by xury_create_with_allocator(). The default xury_create()
- * uses the system allocator.
  */
 
 typedef struct {
@@ -433,20 +324,6 @@ typedef struct {
  * ============================================================================
  * STORAGE INTERFACE
  * ============================================================================
- *
- * Optional host-provided storage for the scan cache.
- *
- * Xury does NOT store anything on disk on its own.
- * If the host wants the scan cache to survive process restarts, it
- * provides this interface.
- *
- * If any callback is NULL, the cache is memory-only for this engine.
- *
- * Rules:
- *   - load:  fill buf up to *len bytes, update *len to actual size.
- *            return 0 on success, non-zero on failure/not-found.
- *   - save:  persist buf of len bytes.
- *            return 0 on success, non-zero on failure.
  */
 
 typedef struct {
