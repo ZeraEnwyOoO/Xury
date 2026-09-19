@@ -544,7 +544,6 @@ xury_err_t xury_err_from_errno_ctx(int errno_value, const char *context)
     case EINPROGRESS:  return XURY_ERR_WOULD_BLOCK;
     case EALREADY:     return XURY_ERR_BUSY;
     case EMSGSIZE:     return XURY_ERR_MSG_TOO_LARGE;
-    case ENETRESET_:   return XURY_ERR_CONNECTION_RESET;  /* never defined; dead */
     case ENOBUFS:      return XURY_ERR_IO;
     case ENOTSUP:      return XURY_ERR_NOT_SUPPORTED;
     case ENOENT:       return XURY_ERR_NO_ROUTE;
