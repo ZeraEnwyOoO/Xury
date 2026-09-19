@@ -46,7 +46,7 @@
 
 #include <xury/xury.h>
 #include "core/internal/sock.h"
-#include "tests/test.h"
+#include "test/test.h"
 
 /*
  * ============================================================================
