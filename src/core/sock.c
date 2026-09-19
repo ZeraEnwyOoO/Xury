@@ -32,6 +32,19 @@
  * never silently pretend a socket works.
  *
  * No allocation. No syscalls here. Only forwarding.
+ *
+ * Namespace:
+ *   The core owns xury_sock_type_t with XURY_SOCK_*. The platform
+ *   owns xury_platform_sock_type_t with XURY_PLATFORM_SOCK_*. This
+ *   file casts between them and enforces value equality at compile
+ *   time.
+ *
+ * Endpoint:
+ *   The public umbrella helper xury_endpoint_clear() lives in the
+ *   api layer (src/api/types.c), which is ABOVE core. Core must not
+ *   depend on api. Where this file needs to clear an endpoint, it
+ *   does so inline.
+ *
  * ============================================================================
  */
 
@@ -44,6 +57,39 @@
 
 #include "core/internal/sock.h"
 #include "platform/platform.h"
+
+/*
+ * ============================================================================
+ * COMPILE-TIME ASSERTIONS
+ * ============================================================================
+ *
+ * The two enums (core and platform) must have identical numeric
+ * values for the cast in xury_sock_create() to be correct.
+ */
+
+_Static_assert((int)XURY_SOCK_UDP == (int)XURY_PLATFORM_SOCK_UDP,
+               "XURY_SOCK_UDP must equal XURY_PLATFORM_SOCK_UDP");
+_Static_assert((int)XURY_SOCK_TCP == (int)XURY_PLATFORM_SOCK_TCP,
+               "XURY_SOCK_TCP must equal XURY_PLATFORM_SOCK_TCP");
+
+/*
+ * ============================================================================
+ * INLINE ENDPOINT HELPERS
+ * ============================================================================
+ *
+ * Core must not depend on the api layer. These small helpers exist
+ * only inside this file. They are not exported.
+ */
+
+static void sock_endpoint_clear(xury_endpoint_t *ep)
+{
+    if (ep == NULL) {
+        return;
+    }
+    ep->ip[0] = '\0';
+    ep->port  = 0;
+    ep->family = XURY_AF_UNSPEC;
+}
 
 /*
  * ============================================================================
@@ -194,9 +240,15 @@ xury_err_t xury_sock_create(xury_family_t family,
         return XURY_ERR_NOT_IMPLEMENTED;
     }
 #endif
-    return xury_platform_sock_create(family,
-                                     (xury_platform_sock_type_t)type,
-                                     out);
+
+    /*
+     * The cast is safe: the static asserts at the top of this file
+     * guarantee the two enums have identical values.
+     */
+    xury_platform_sock_type_t ptype =
+        (xury_platform_sock_type_t)type;
+
+    return xury_platform_sock_create(family, ptype, out);
 }
 
 xury_err_t xury_sock_close(xury_sock_t s)
@@ -373,7 +425,7 @@ xury_err_t xury_sock_recvfrom(xury_sock_t s,
         *out_len = 0u;
     }
     if (out_from != NULL) {
-        xury_endpoint_clear(out_from);
+        sock_endpoint_clear(out_from);
     }
 
     if (s == XURY_SOCK_INVALID) {
