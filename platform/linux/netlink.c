@@ -64,6 +64,7 @@
 
 #include <xury/types.h>
 #include <xury/err.h>
+#include <xury/xury.h>  
 
 #include "platform/platform.h"
 
