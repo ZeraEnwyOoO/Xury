@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -57,6 +57,14 @@
  * Naming:
  *   Every function begins with xury_platform_. The core's forwarding
  *   wrappers use xury_sock_*, xury_time_*, xury_rand_*, xury_log_*.
+ *
+ * Namespace note:
+ *   The platform layer has its OWN enum namespace
+ *   (xury_platform_sock_type_t with XURY_PLATFORM_SOCK_*). The core
+ *   has its own (xury_sock_type_t with XURY_SOCK_*). The two are
+ *   intentionally separate: neither layer includes the other's
+ *   header, and the core casts between them. The numeric values
+ *   MUST match; a compile-time check enforces this in sock.c.
  *
  * File layout:
  *   platform.h            this file
@@ -166,11 +174,22 @@ xury_err_t xury_platform_rand_secure(void *buf, size_t n);
  *
  * The platform layer owns the translation between xury_endpoint_t
  * and the OS sockaddr type. The core never sees a sockaddr.
+ *
+ * Namespace:
+ *   xury_platform_sock_type_t and its enumerators XURY_PLATFORM_SOCK_*
+ *   are PRIVATE to the platform layer. They must not be used outside
+ *   src/platform/. The core has its own xury_sock_type_t in
+ *   src/core/internal/sock.h with enumerators XURY_SOCK_*.
+ *
+ *   The numeric values of the two enums MUST match:
+ *     XURY_PLATFORM_SOCK_UDP == XURY_SOCK_UDP == 0
+ *     XURY_PLATFORM_SOCK_TCP == XURY_SOCK_TCP == 1
+ *   sock.c enforces this with a compile-time assertion.
  */
 
 typedef enum {
-    XURY_SOCK_UDP = 0,
-    XURY_SOCK_TCP = 1,
+    XURY_PLATFORM_SOCK_UDP = 0,
+    XURY_PLATFORM_SOCK_TCP = 1,
 } xury_platform_sock_type_t;
 
 xury_err_t xury_platform_sock_init(void);
