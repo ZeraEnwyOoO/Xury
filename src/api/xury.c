@@ -53,7 +53,7 @@
 
 #include "api/internal/xury.h"
 #include "api/internal/version.h"
-
+#include "api/internal/types.h"   
 /*
  * ============================================================================
  * PROCESS LIFECYCLE
