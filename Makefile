@@ -6,7 +6,7 @@
 #   include/      public headers
 #   src/          api + core sources
 #   platform/     platform layer (posix, linux, android, ...)
-#   tests/        unit tests
+#   test/         unit tests
 #
 # ═══════════════════════════════════════════════════════════
 
@@ -71,19 +71,19 @@ LIB_OBJS := $(LIB_SRCS:%.c=build/obj/%.o)
 # TEST SOURCES
 # ───────────────────────────────────────────────────────────
 TEST_SRCS := \
-    tests/unit/api/test_version.c \
-    tests/unit/api/test_types.c \
-    tests/unit/api/test_err.c \
-    tests/unit/api/test_weapon.c \
-    tests/unit/api/test_config.c \
-    tests/unit/core/test_mem.c \
-    tests/unit/core/test_log.c \
-    tests/unit/core/test_endian.c \
-    tests/unit/core/test_bytes.c \
-    tests/unit/core/test_rand.c \
-    tests/unit/core/test_sock.c
+    test/unit/api/test_version.c \
+    test/unit/api/test_types.c \
+    test/unit/api/test_err.c \
+    test/unit/api/test_weapon.c \
+    test/unit/api/test_config.c \
+    test/unit/core/test_mem.c \
+    test/unit/core/test_log.c \
+    test/unit/core/test_endian.c \
+    test/unit/core/test_bytes.c \
+    test/unit/core/test_rand.c \
+    test/unit/core/test_sock.c
 
-TEST_BINS := $(TEST_SRCS:tests/unit/%.c=build/tests/%)
+TEST_BINS := $(TEST_SRCS:test/unit/%.c=build/tests/%)
 
 # ───────────────────────────────────────────────────────────
 # TARGETS
@@ -120,11 +120,11 @@ build/obj/%.o: %.c
 
 tests: $(TEST_BINS)
 
-build/tests/api/%: tests/unit/api/%.c $(LIB)
+build/tests/api/%: test/unit/api/%.c $(LIB)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(LIB) $(LDFLAGS) $(LDLIBS) -o $@
 
-build/tests/core/%: tests/unit/core/%.c $(LIB)
+build/tests/core/%: test/unit/core/%.c $(LIB)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(LIB) $(LDFLAGS) $(LDLIBS) -o $@
 
