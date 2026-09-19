@@ -60,6 +60,7 @@
 #include <xury/types.h>
 #include <xury/hooks.h>
 #include <xury/err.h>
+#include <xury/config.h>
 
 #ifdef __cplusplus
 extern "C" {
