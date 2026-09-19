@@ -50,6 +50,7 @@
 
 #include <xury/types.h>
 #include <xury/err.h>
+#include <xury/xury.h>               
 
 
 #include "platform/platform.h"
@@ -227,9 +228,9 @@ xury_err_t xury_platform_sock_create(xury_family_t family,
     }
 
     int st;
-    if (type == XURY_SOCK_UDP) {
+    if (type == XURY_PLATFORM_SOCK_UDP) {
         st = SOCK_DGRAM;
-    } else if (type == XURY_SOCK_TCP) {
+    } else if (type == XURY_PLATFORM_SOCK_TCP) {
         st = SOCK_STREAM;
     } else {
         return XURY_ERR_INVAL;
