@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -54,6 +54,14 @@
  *   used only from that engine's thread, except during BLITZ where
  *   worker threads may call send/recv on their own sockets.
  *
+ * Namespace note:
+ *   This header owns xury_sock_type_t with enumerators XURY_SOCK_*.
+ *   The platform layer owns xury_platform_sock_type_t with
+ *   enumerators XURY_PLATFORM_SOCK_*. The two are intentionally
+ *   separate namespaces; the core casts between them. The numeric
+ *   values MUST match, and sock.c enforces this with a compile-time
+ *   assertion.
+ *
  * Dependencies:
  *   <xury/types.h>, <xury/err.h>. No other Xury header.
  *
@@ -91,6 +99,11 @@ extern "C" {
  * Xury uses UDP for everything on the traversal path. TCP is used
  * only for peer relay when UDP is not viable. The dispatch layer
  * accepts both so relay.c can request either.
+ *
+ * Namespace:
+ *   xury_sock_type_t and its enumerators XURY_SOCK_* belong to the
+ *   CORE. The platform layer has its own separate enum
+ *   (xury_platform_sock_type_t). See the namespace note above.
  */
 
 typedef enum {
