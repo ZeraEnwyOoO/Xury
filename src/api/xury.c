@@ -49,6 +49,7 @@
 
 #include <xury/types.h>
 #include <xury/err.h>
+#include <xury/engine.h>
 
 #include "api/internal/xury.h"
 #include "api/internal/version.h"
