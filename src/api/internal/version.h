@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -59,6 +59,7 @@
 #include <stdbool.h>
 
 #include <xury/version.h>
+#include <xury/err.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -180,7 +181,7 @@ const char *xury_version_cache_prefix(void);
  *   XURY_OK         — consistent
  *   XURY_ERR_INVAL  — mismatch (headers/library out of sync)
  */
-int xury_version_self_check(void);
+xury_err_t xury_version_self_check(void);
 
 #ifdef __cplusplus
 }
