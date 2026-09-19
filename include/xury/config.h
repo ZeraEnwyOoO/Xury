@@ -64,6 +64,7 @@
 
 #include <xury/version.h>
 #include <xury/types.h>
+#include <xury/err.h>
 
 #ifdef __cplusplus
 extern "C" {
