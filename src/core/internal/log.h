@@ -30,7 +30,7 @@
  * to the host's log hook (see include/xury/hooks.h). It does NOT write
  * to stderr, syslog, logcat, or anywhere else on its own. The platform
  * layer decides what to do with a log line; that decision lives in
- * src/platform/*/log.c.
+ * src/platform/*//*log.c
  *
  * Why this split:
  *
