@@ -78,7 +78,6 @@ if(XURY_WARNINGS_AS_ERRORS)
     list(APPEND XURY_COMPILE_OPTIONS -Werror)
 endif()
 
-# Linux-specific flags
 if(XURY_PLATFORM STREQUAL "linux")
     list(APPEND XURY_COMPILE_OPTIONS
         -D_GNU_SOURCE
@@ -86,7 +85,6 @@ if(XURY_PLATFORM STREQUAL "linux")
     )
 endif()
 
-# Android-specific flags
 if(XURY_PLATFORM STREQUAL "android")
     list(APPEND XURY_COMPILE_OPTIONS
         -fPIC
@@ -127,25 +125,26 @@ set(XURY_PHASE_C
 # PHASE D — PLATFORM
 # ───────────────────────────────────────────────────────────
 set(XURY_PHASE_D
+    src/platform/posix/init.c
     src/platform/posix/sock.c
     src/platform/posix/time.c
     src/platform/posix/log.c
     src/platform/posix/rand.c
 )
 
-# Platform-specific overrides
 if(XURY_PLATFORM STREQUAL "linux")
     list(APPEND XURY_PHASE_D
         src/platform/linux/netlink.c
     )
 elseif(XURY_PLATFORM STREQUAL "android")
     list(REMOVE_ITEM XURY_PHASE_D
+        src/platform/posix/init.c
         src/platform/posix/log.c
         src/platform/posix/rand.c
     )
     list(APPEND XURY_PHASE_D
-        src/platform/android/log.c
         src/platform/android/jni.c
+        src/platform/android/log.c
         src/platform/android/permissions.c
         src/platform/android/rand.c
     )
@@ -192,7 +191,6 @@ set_target_properties(xury PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
-# Android-specific: link against liblog
 if(XURY_PLATFORM STREQUAL "android")
     find_library(ANDROID_LOG_LIB log)
     if(ANDROID_LOG_LIB)
