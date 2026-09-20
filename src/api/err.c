@@ -1,5 +1,4 @@
-
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -331,6 +330,21 @@ static const xury_err_info_t g_err_table[] = {
     { XURY_ERR_NOT_CONNECTED,
       "XURY_ERR_NOT_CONNECTED", "not_connected", "not connected",
       XURY_ERR_CLASS_STATE, false, false },
+
+    /*
+     * ----------------------------------------------------------------
+     * RESEARCH (-120 .. -129)
+     * ----------------------------------------------------------------
+     *
+     * These are NOT missing features. The code path exists and is
+     * reachable, but the constants it depends on have not yet been
+     * validated against real-world measurement.
+     *
+     * See docs/RESEARCH.md for the calibration plan.
+     */
+    { XURY_ERR_NOT_CALIBRATED,
+      "XURY_ERR_NOT_CALIBRATED", "not_calibrated", "requires empirical calibration",
+      XURY_ERR_CLASS_RESEARCH, false, false },
 };
 
 #define XURY_ERR_TABLE_COUNT \
@@ -426,6 +440,7 @@ const char *xury_err_class_name(xury_err_class_t cls)
     case XURY_ERR_CLASS_PLATFORM: return "platform";
     case XURY_ERR_CLASS_STATE:    return "state";
     case XURY_ERR_CLASS_UNKNOWN:  return "unknown";
+    case XURY_ERR_CLASS_RESEARCH: return "research";
     default:                      return "unknown";
     }
 }
