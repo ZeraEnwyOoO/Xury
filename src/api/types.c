@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -21,29 +21,13 @@
  * XURY TYPES — IMPLEMENTATION
  * ============================================================================
  *
- * Implements:
- *   - public endpoint helpers (include/xury/xury.h)
- *   - public peer id helpers  (include/xury/xury.h)
- *   - internal helpers         (src/api/internal/types.h)
- *
- * Everything here is pure:
- *   - no allocation
- *   - no I/O
- *   - no global mutable state
+ * Implements public endpoint/peer_id helpers, and the internal helpers
+ * declared in src/api/internal/types.h.
  *
  * The implementation parses and formats IP addresses by hand, without
- * inet_pton / inet_ntop. This is deliberate:
- *
- *   - inet_pton is not available on every target (some Android NDK
- *     versions lack the IPv4-mapped form we want to reject).
- *   - we need strict parsing that rejects "1.2.3.4 " and "01.2.3.4".
- *   - we need to accept and canonicalize the compressed IPv6 forms.
- *
- * The parser is not RFC-complete for every exotic IPv6 form (e.g. it
- * does not support IPv4-mapped IPv6 "::ffff:1.2.3.4"), because Xury
- * does not need them. It rejects anything it does not understand,
- * which is the correct behavior for a NAT engine.
- *
+ * inet_pton / inet_ntop. This is deliberate: we need strict parsing
+ * that rejects "1.2.3.4 " and "01.2.3.4", and we need to accept and
+ * canonicalize compressed IPv6 forms.
  * ============================================================================
  */
 
@@ -54,6 +38,7 @@
 
 #include <xury/types.h>
 #include <xury/err.h>
+#include <xury/xury.h>
 
 #include "api/internal/types.h"
 
@@ -82,10 +67,6 @@ const char *xury_family_name(xury_family_t family)
     }
 }
 
-/*
- * Case-insensitive comparison of a NUL-terminated token against a
- * lowercase literal. Used by xury_family_from_name().
- */
 static bool family_token_eq_ci(const char *token, const char *literal)
 {
     while (*token != '\0' && *literal != '\0') {
@@ -123,18 +104,8 @@ xury_family_t xury_family_from_name(const char *name)
  * ============================================================================
  * IPv4 PARSING
  * ============================================================================
- *
- * Strict: exactly four decimal octets 0..255, separated by single dots.
- * No leading zeros (except "0" itself), no leading/trailing whitespace,
- * no trailing garbage.
- *
- * Rejects: "01.2.3.4", "1.2.3", "1.2.3.4.5", "1.2.3.4 ", "1.2.3.-1".
  */
 
-/*
- * Parse a single decimal octet. Returns true on success and advances
- * *pp past the last digit.
- */
 static bool ipv4_parse_octet(const char **pp, uint8_t *out)
 {
     const char *p = *pp;
@@ -171,10 +142,6 @@ static bool ipv4_parse_octet(const char **pp, uint8_t *out)
     return true;
 }
 
-/*
- * Parse an entire IPv4 address into 4 bytes.
- * Returns the number of bytes consumed, or 0 on failure.
- */
 static size_t ipv4_parse(const char *s, uint8_t out[4])
 {
     const char *p = s;
@@ -191,7 +158,6 @@ static size_t ipv4_parse(const char *s, uint8_t out[4])
         }
     }
 
-    /* Must consume the entire string. */
     if (*p != '\0') {
         return 0;
     }
@@ -205,9 +171,6 @@ static size_t ipv4_parse(const char *s, uint8_t out[4])
  * ============================================================================
  */
 
-/*
- * Append a decimal octet to buf. Returns bytes written.
- */
 static size_t ipv4_format_octet(char *buf, size_t buflen, uint8_t v)
 {
     char tmp[4];
@@ -239,11 +202,6 @@ static size_t ipv4_format_octet(char *buf, size_t buflen, uint8_t v)
     return written;
 }
 
-/*
- * Format 4 bytes into dotted decimal. Writes at most buflen-1 chars
- * plus NUL. Returns total bytes that WOULD have been written,
- * excluding the NUL.
- */
 static size_t ipv4_format(char *buf, size_t buflen, const uint8_t addr[4])
 {
     size_t written = 0;
@@ -269,26 +227,8 @@ static size_t ipv4_format(char *buf, size_t buflen, const uint8_t addr[4])
  * ============================================================================
  * IPv6 PARSING
  * ============================================================================
- *
- * Supports:
- *   - full form:        "2001:0db8:0000:0000:0000:0000:0000:0001"
- *   - compressed:       "2001:db8::1"
- *   - leading zeros:    "2001:db8:0:0:0:0:0:1"
- *   - lowercase/upper:  "2001:DB8::1"
- *   - "::"             all zeros
- *
- * Rejects:
- *   - IPv4-mapped:      "::ffff:1.2.3.4"
- *   - zone ids:         "fe80::1%eth0"
- *   - more than one "::"
- *   - groups of more than 4 hex digits
- *   - more than 8 groups without "::"
  */
 
-/*
- * Parse one 16-bit hex group. Returns true on success and advances
- * *pp past the last hex digit. Requires at least 1 digit.
- */
 static bool ipv6_parse_group(const char **pp, uint16_t *out)
 {
     const char *p = *pp;
@@ -323,10 +263,6 @@ static bool ipv6_parse_group(const char **pp, uint16_t *out)
     return true;
 }
 
-/*
- * Parse an entire IPv6 address into 16 bytes.
- * Returns 0 on failure, non-zero on success.
- */
 static bool ipv6_parse(const char *s, uint8_t out[16])
 {
     if (s == NULL || *s == '\0') {
@@ -339,17 +275,14 @@ static bool ipv6_parse(const char *s, uint8_t out[16])
 
     const char *p = s;
 
-    /* Special case: leading "::" */
     if (p[0] == ':' && p[1] == ':') {
         double_colon_at = 0;
         p += 2;
         if (*p == '\0') {
-            /* "::" == all zeros */
             memset(out, 0, 16);
             return true;
         }
     } else if (p[0] == ':') {
-        /* A single leading ':' is invalid. */
         return false;
     }
 
@@ -374,7 +307,6 @@ static bool ipv6_parse(const char *s, uint8_t out[16])
         p++;
 
         if (*p == ':') {
-            /* Double colon. Only one allowed. */
             if (double_colon_at >= 0) {
                 return false;
             }
@@ -384,24 +316,20 @@ static bool ipv6_parse(const char *s, uint8_t out[16])
                 break;
             }
         } else if (*p == '\0') {
-            /* Trailing ':' is invalid. */
             return false;
         }
     }
 
-    /* If no "::", we must have exactly 8 groups. */
     if (double_colon_at < 0) {
         if (group_count != 8) {
             return false;
         }
     } else {
-        /* If "::" is present, we must have < 8 groups. */
         if (group_count >= 8) {
             return false;
         }
     }
 
-    /* Expand "::" into zeros and write out. */
     uint16_t expanded[8] = {0};
     if (double_colon_at < 0) {
         for (int i = 0; i < 8; i++) {
@@ -413,14 +341,12 @@ static bool ipv6_parse(const char *s, uint8_t out[16])
         for (int i = 0; i < double_colon_at; i++) {
             expanded[i] = groups[i];
         }
-        /* Middle zeros stay 0 from initialization. */
         for (int i = double_colon_at; i < group_count; i++) {
             expanded[double_colon_at + zeros + (i - double_colon_at)] =
                 groups[i];
         }
     }
 
-    /* Write network-order bytes. */
     for (int i = 0; i < 8; i++) {
         out[i * 2 + 0] = (uint8_t)((expanded[i] >> 8) & 0xFFu);
         out[i * 2 + 1] = (uint8_t)(expanded[i] & 0xFFu);
@@ -429,28 +355,12 @@ static bool ipv6_parse(const char *s, uint8_t out[16])
     return true;
 }
 
- /* ---- continued from part 1/2 ---- */
-
 /*
  * ============================================================================
  * IPv6 FORMATTING
  * ============================================================================
- *
- * Produces the shortest RFC 5952 form:
- *   - lowercase hex, no leading zeros in a group
- *   - longest run of zero groups replaced by "::"
- *   - a single zero group is NOT compressed
- *
- * Examples:
- *   2001:0db8:0000:0000:0000:0000:0000:0001  ->  2001:db8::1
- *   0000:0000:0000:0000:0000:0000:0000:0000  ->  ::
- *   0000:0000:0000:0000:0000:0000:0000:0001  ->  ::1
- *   2001:db8:1:2:3:4:5:6                     ->  2001:db8:1:2:3:4:5:6
  */
 
-/*
- * Append one hex group, no leading zeros. Returns bytes written.
- */
 static size_t ipv6_format_group(char *buf,
                                 size_t buflen,
                                 uint16_t v)
@@ -465,7 +375,6 @@ static size_t ipv6_format_group(char *buf,
         return 0;
     }
 
-    /* Up to 4 hex digits. */
     char tmp[4];
     int n = 0;
     while (v > 0) {
@@ -483,10 +392,6 @@ static size_t ipv6_format_group(char *buf,
     return written;
 }
 
-/*
- * Format 16 bytes into compressed IPv6. Returns bytes that WOULD have
- * been written, excluding NUL. Always NUL-terminates when buflen > 0.
- */
 static size_t ipv6_format(char *buf, size_t buflen, const uint8_t addr[16])
 {
     uint16_t groups[8];
@@ -495,10 +400,6 @@ static size_t ipv6_format(char *buf, size_t buflen, const uint8_t addr[16])
                                (uint16_t)addr[i * 2 + 1]);
     }
 
-    /*
-     * Find the longest run of zero groups (length >= 2). RFC 5952 says
-     * compress the leftmost longest run.
-     */
     int best_start = -1;
     int best_len = 0;
     int cur_start = -1;
@@ -532,7 +433,6 @@ static size_t ipv6_format(char *buf, size_t buflen, const uint8_t addr[16])
 
     for (int i = 0; i < 8; i++) {
         if (best_start >= 0 && i == best_start) {
-            /* Emit "::" once. */
             if (!wrote_colon) {
                 if (written + 1 < buflen && buf) {
                     buf[written] = ':';
@@ -544,11 +444,10 @@ static size_t ipv6_format(char *buf, size_t buflen, const uint8_t addr[16])
                 written++;
                 wrote_colon = true;
             }
-            i += best_len - 1;   /* skip the zero run */
+            i += best_len - 1;
             continue;
         }
 
-        /* Emit ':' between groups, but not right after "::". */
         if (i > 0 && !(best_start >= 0 && i == best_start + best_len)) {
             if (written + 1 < buflen && buf) {
                 buf[written] = ':';
@@ -586,7 +485,6 @@ xury_err_t xury_parse_ip(const char *ip,
         return XURY_ERR_INVAL;
     }
 
-    /* Try IPv4 first (cheaper). */
     if (addr_cap >= 4u) {
         uint8_t v4[4];
         if (ipv4_parse(ip, v4) != 0u) {
@@ -597,7 +495,6 @@ xury_err_t xury_parse_ip(const char *ip,
         }
     }
 
-    /* Then IPv6. */
     if (addr_cap >= 16u) {
         uint8_t v6[16];
         if (ipv6_parse(ip, v6)) {
@@ -649,11 +546,6 @@ xury_err_t xury_format_ip(xury_family_t family,
  * ============================================================================
  */
 
-/*
- * Copy a formatted ip string into an endpoint. The ip is already
- * canonical (produced by our formatter) so no further normalization
- * is needed here.
- */
 static xury_err_t endpoint_set_ip(xury_endpoint_t *ep,
                                   xury_family_t family,
                                   const uint8_t *addr,
@@ -670,7 +562,7 @@ static xury_err_t endpoint_set_ip(xury_endpoint_t *ep,
     if (len >= sizeof(ep->ip)) {
         return XURY_ERR_BUFFER_TOO_SMALL;
     }
-    memcpy(ep->ip, tmp, len + 1u);   /* include NUL */
+    memcpy(ep->ip, tmp, len + 1u);
     ep->family = family;
     return XURY_OK;
 }
@@ -698,11 +590,6 @@ xury_err_t xury_endpoint_canonicalize(xury_endpoint_t *ep)
         return XURY_ERR_BAD_ENDPOINT;
     }
 
-    /*
-     * The family field must agree with what the ip text actually is.
-     * If the caller wrote family=INET6 but the text is IPv4 (or vice
-     * versa), that is a malformed endpoint.
-     */
     if (parsed_family != ep->family) {
         return XURY_ERR_BAD_ENDPOINT;
     }
@@ -716,10 +603,6 @@ xury_err_t xury_endpoint_canonicalize(xury_endpoint_t *ep)
  * ============================================================================
  */
 
-/*
- * Re-parse an endpoint's ip text into bytes. Returns XURY_OK on success.
- * Internal helper shared by the is_* predicates.
- */
 static xury_err_t endpoint_to_bytes(const xury_endpoint_t *ep,
                                     xury_family_t *out_family,
                                     uint8_t out_addr[16],
@@ -745,7 +628,6 @@ bool xury_endpoint_is_loopback(const xury_endpoint_t *ep)
     if (f == XURY_AF_INET) {
         return a[0] == 127u;
     }
-    /* IPv6 ::1 */
     for (int i = 0; i < 15; i++) {
         if (a[i] != 0u) {
             return false;
@@ -765,7 +647,6 @@ bool xury_endpoint_is_link_local(const xury_endpoint_t *ep)
     if (f == XURY_AF_INET) {
         return (a[0] == 169u && a[1] == 254u);
     }
-    /* IPv6 fe80::/10 */
     return (a[0] == 0xFEu && (a[1] & 0xC0u) == 0x80u);
 }
 
@@ -792,21 +673,11 @@ bool xury_endpoint_is_private(const xury_endpoint_t *ep)
         return false;
     }
     if (f == XURY_AF_INET) {
-        /* 10.0.0.0/8 */
-        if (a[0] == 10u) {
-            return true;
-        }
-        /* 172.16.0.0/12 */
-        if (a[0] == 172u && (a[1] & 0xF0u) == 16u) {
-            return true;
-        }
-        /* 192.168.0.0/16 */
-        if (a[0] == 192u && a[1] == 168u) {
-            return true;
-        }
+        if (a[0] == 10u) return true;
+        if (a[0] == 172u && (a[1] & 0xF0u) == 16u) return true;
+        if (a[0] == 192u && a[1] == 168u) return true;
         return false;
     }
-    /* IPv6 unique local fc00::/7 */
     return ((a[0] & 0xFEu) == 0xFCu);
 }
 
@@ -821,7 +692,6 @@ bool xury_endpoint_is_global_v6(const xury_endpoint_t *ep)
     if (f != XURY_AF_INET6) {
         return false;
     }
-    /* Global unicast 2000::/3 */
     return ((a[0] & 0xE0u) == 0x20u);
 }
 
@@ -837,7 +707,6 @@ uint64_t xury_endpoint_hash(const xury_endpoint_t *ep)
         return 0u;
     }
 
-    /* FNV-1a 64-bit, byte-wise over canonical bytes. */
     uint64_t h = 14695981039346656037ull;
     const uint64_t prime = 1099511628211ull;
 
@@ -856,7 +725,6 @@ uint64_t xury_endpoint_hash(const xury_endpoint_t *ep)
             HASH_BYTE(a[i]);
         }
     } else {
-        /* Fall back to text bytes. */
         for (const char *p = ep->ip; *p; p++) {
             HASH_BYTE((uint8_t)*p);
         }
@@ -900,7 +768,6 @@ int xury_endpoint_compare(const xury_endpoint_t *a,
             return c < 0 ? -1 : 1;
         }
     } else {
-        /* Fall back to text. */
         int c = strcmp(a->ip, b->ip);
         if (c != 0) {
             return c < 0 ? -1 : 1;
@@ -925,7 +792,6 @@ uint64_t xury_peer_id_hash(const xury_peer_id_t *id)
         return 0u;
     }
 
-    /* FNV-1a 64-bit over 32 bytes. */
     uint64_t h = 14695981039346656037ull;
     const uint64_t prime = 1099511628211ull;
     for (size_t i = 0; i < XURY_PEER_ID_SIZE; i++) {
@@ -995,13 +861,11 @@ xury_err_t xury_peer_id_from_string(const char *str,
         return XURY_ERR_INVAL;
     }
 
-    /* Optional leading "0x". */
     const char *p = str;
     if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) {
         p += 2;
     }
 
-    /* Must be exactly 64 hex characters. */
     size_t len = 0;
     while (p[len] != '\0') {
         len++;
@@ -1021,22 +885,13 @@ xury_err_t xury_peer_id_from_string(const char *str,
     return XURY_OK;
 }
 
-/*
- * ============================================================================
- * PEER ID RANDOM
- * ============================================================================
- *
- * Real random source is provided by the platform layer (Phase 4).
- * Until that exists, peer_id_random returns XURY_ERR_NOT_IMPLEMENTED.
- * This is intentional: no fake randomness.
- */
 xury_err_t xury_peer_id_random(xury_peer_id_t *id)
 {
     if (id == NULL) {
         return XURY_ERR_INVAL;
     }
     /*
-     * Phase 4 will wire this to the platform RNG.
+     * Phase D will wire this to the platform RNG.
      * Do NOT fake randomness here.
      */
     return XURY_ERR_NOT_IMPLEMENTED;
@@ -1124,17 +979,13 @@ xury_err_t xury_endpoint_to_string(const xury_endpoint_t *ep,
     if (ep == NULL || buf == NULL || buflen == 0u) {
         return XURY_ERR_INVAL;
     }
-    if (ep->family == XURY_AF_INET6) {
-        return XURY_ERR_BAD_ENDPOINT;
-    }
+
+    /* ✅ FIX: removed the incorrect early-return for AF_INET6 */
+
     if (ep->family != XURY_AF_INET && ep->family != XURY_AF_INET6) {
         return XURY_ERR_BAD_ENDPOINT;
     }
 
-    /*
-     * IPv6 uses brackets: "[addr]:port".
-     * IPv4 uses plain:   "addr:port".
-     */
     size_t written = 0;
     if (ep->family == XURY_AF_INET6) {
         if (written + 1 < buflen) {
@@ -1164,7 +1015,6 @@ xury_err_t xury_endpoint_to_string(const xury_endpoint_t *ep,
     buf[written] = ':';
     written++;
 
-    /* Decimal port, no leading zeros. */
     if (ep->port == 0) {
         if (written + 1 >= buflen) {
             return XURY_ERR_BUFFER_TOO_SMALL;
@@ -1205,7 +1055,6 @@ xury_err_t xury_endpoint_from_string(const char *str,
     const char *port_start;
 
     if (*p == '[') {
-        /* IPv6 form: [addr]:port */
         p++;
         ip_start = p;
         while (*p != '\0' && *p != ']') {
@@ -1223,7 +1072,6 @@ xury_err_t xury_endpoint_from_string(const char *str,
         port_start = p;
         out->family = XURY_AF_INET6;
     } else {
-        /* IPv4 form: addr:port */
         ip_start = p;
         while (*p != '\0' && *p != ':') {
             p++;
@@ -1237,7 +1085,6 @@ xury_err_t xury_endpoint_from_string(const char *str,
         out->family = XURY_AF_INET;
     }
 
-    /* Extract ip. */
     size_t iplen = (size_t)(ip_end - ip_start);
     if (iplen == 0u || iplen >= sizeof(out->ip)) {
         return XURY_ERR_BAD_ENDPOINT;
@@ -1245,7 +1092,6 @@ xury_err_t xury_endpoint_from_string(const char *str,
     memcpy(out->ip, ip_start, iplen);
     out->ip[iplen] = '\0';
 
-    /* Parse port. */
     if (*port_start == '\0') {
         return XURY_ERR_BAD_PORT;
     }
@@ -1261,22 +1107,8 @@ xury_err_t xury_endpoint_from_string(const char *str,
     }
     out->port = (uint16_t)port;
 
-    /* Verify ip text matches family. */
     uint8_t a[16];
     xury_family_t f = XURY_AF_UNSPEC;
     size_t n = 0;
     if (xury_parse_ip(out->ip, &f, a, sizeof(a), &n) != XURY_OK) {
-        return XURY_ERR_BAD_ENDPOINT;
-    }
-    if (f != out->family) {
-        return XURY_ERR_BAD_FAMILY;
-    }
-
-    return XURY_OK;
-}
-
-/*
- * ============================================================================
- * END OF FILE
- * ============================================================================
- */
+        return XURY
