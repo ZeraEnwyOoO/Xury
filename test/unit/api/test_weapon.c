@@ -29,7 +29,7 @@
 
 #include <xury/xury.h>
 #include "api/internal/weapon.h"
-#include "tests/test.h"
+#include "test/test.h"
 
 /*
  * ============================================================================
