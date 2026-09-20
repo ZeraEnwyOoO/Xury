@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -141,6 +141,8 @@ static void test_err_class(void)
                    XURY_ERR_CLASS_PLATFORM);
     TEST_ASSERT_EQ(xury_err_class(XURY_ERR_NOT_READY),
                    XURY_ERR_CLASS_STATE);
+    TEST_ASSERT_EQ(xury_err_class(XURY_ERR_NOT_CALIBRATED),
+                   XURY_ERR_CLASS_RESEARCH);
     TEST_ASSERT_EQ(xury_err_class((xury_err_t)-9999),
                    XURY_ERR_CLASS_UNKNOWN);
 }
@@ -160,6 +162,8 @@ static void test_err_class_name(void)
     TEST_ASSERT_STREQ(xury_err_class_name(XURY_ERR_CLASS_PLATFORM),
                       "platform");
     TEST_ASSERT_STREQ(xury_err_class_name(XURY_ERR_CLASS_STATE), "state");
+    TEST_ASSERT_STREQ(xury_err_class_name(XURY_ERR_CLASS_RESEARCH),
+                      "research");
     TEST_ASSERT_STREQ(xury_err_class_name(XURY_ERR_CLASS_UNKNOWN),
                       "unknown");
     TEST_ASSERT_STREQ(xury_err_class_name((xury_err_class_t)999),
@@ -281,6 +285,56 @@ static void test_info_unknown(void)
     TEST_ASSERT_NULL(info);
 }
 
+static void test_not_calibrated_exists(void)
+{
+    const xury_err_info_t *info = xury_err_info(XURY_ERR_NOT_CALIBRATED);
+    TEST_ASSERT_NOT_NULL(info);
+    TEST_ASSERT_EQ(info->code, XURY_ERR_NOT_CALIBRATED);
+    TEST_ASSERT_STREQ(info->symbol, "XURY_ERR_NOT_CALIBRATED");
+    TEST_ASSERT_STREQ(info->tag, "not_calibrated");
+    TEST_ASSERT_STREQ(info->message, "requires empirical calibration");
+    TEST_ASSERT_EQ(info->class_id, XURY_ERR_CLASS_RESEARCH);
+    TEST_ASSERT(!info->retryable);
+    TEST_ASSERT(!info->fatal);
+    TEST_ASSERT(!xury_err_is_benign(XURY_ERR_NOT_CALIBRATED));
+}
+
+static void test_not_calibrated_strerror(void)
+{
+    const char *s = xury_strerror(XURY_ERR_NOT_CALIBRATED);
+    TEST_ASSERT_NOT_NULL(s);
+    TEST_ASSERT(s[0] != '\0');
+    /* Must not be the generic "unknown error" fallback. */
+    TEST_ASSERT(strcmp(s, "unknown error") != 0);
+}
+
+static void test_not_calibrated_class(void)
+{
+    TEST_ASSERT_EQ(xury_err_class(XURY_ERR_NOT_CALIBRATED),
+                   XURY_ERR_CLASS_RESEARCH);
+    TEST_ASSERT_STREQ(xury_err_class_name(XURY_ERR_CLASS_RESEARCH),
+                      "research");
+}
+
+static void test_research_class_distinct(void)
+{
+    /*
+     * RESEARCH must be a distinct class value from every other class.
+     * This catches accidental aliasing when adding a new class.
+     */
+    TEST_ASSERT(XURY_ERR_CLASS_RESEARCH != XURY_ERR_CLASS_OK);
+    TEST_ASSERT(XURY_ERR_CLASS_RESEARCH != XURY_ERR_CLASS_GENERAL);
+    TEST_ASSERT(XURY_ERR_CLASS_RESEARCH != XURY_ERR_CLASS_ARGUMENT);
+    TEST_ASSERT(XURY_ERR_CLASS_RESEARCH != XURY_ERR_CLASS_MEMORY);
+    TEST_ASSERT(XURY_ERR_CLASS_RESEARCH != XURY_ERR_CLASS_NETWORK);
+    TEST_ASSERT(XURY_ERR_CLASS_RESEARCH != XURY_ERR_CLASS_NAT);
+    TEST_ASSERT(XURY_ERR_CLASS_RESEARCH != XURY_ERR_CLASS_CGNAT);
+    TEST_ASSERT(XURY_ERR_CLASS_RESEARCH != XURY_ERR_CLASS_PEER);
+    TEST_ASSERT(XURY_ERR_CLASS_RESEARCH != XURY_ERR_CLASS_PLATFORM);
+    TEST_ASSERT(XURY_ERR_CLASS_RESEARCH != XURY_ERR_CLASS_STATE);
+    TEST_ASSERT(XURY_ERR_CLASS_RESEARCH != XURY_ERR_CLASS_UNKNOWN);
+}
+
  /* ---- continued from part 1/2 ---- */
 
 /*
@@ -359,6 +413,17 @@ static void test_to_errno_unknown_falls_back_to_eio(void)
     TEST_ASSERT_EQ(xury_err_to_errno((xury_err_t)-9999), EIO);
 }
 
+static void test_to_errno_not_calibrated_is_eio(void)
+{
+    /*
+     * NOT_CALIBRATED is not a "function not implemented" condition;
+     * it is a pending-experiment condition. The project convention is
+     * to map unmapped codes to EIO, and this test pins that choice so
+     * a future change cannot silently introduce a different mapping.
+     */
+    TEST_ASSERT_EQ(xury_err_to_errno(XURY_ERR_NOT_CALIBRATED), EIO);
+}
+
 static void test_errno_roundtrip_for_known_pairs(void)
 {
     /*
@@ -433,6 +498,7 @@ static void test_is_benign(void)
     TEST_ASSERT(!xury_err_is_benign(XURY_ERR_INVAL));
     TEST_ASSERT(!xury_err_is_benign(XURY_ERR_NOMEM));
     TEST_ASSERT(!xury_err_is_benign(XURY_ERR_INTERNAL));
+    TEST_ASSERT(!xury_err_is_benign(XURY_ERR_NOT_CALIBRATED));
 }
 
 static void test_classification_mutually_consistent(void)
@@ -453,6 +519,11 @@ static void test_classification_mutually_consistent(void)
     TEST_ASSERT(xury_err_is_retryable(XURY_ERR_TIMEOUT));
     TEST_ASSERT(!xury_err_is_fatal(XURY_ERR_TIMEOUT));
     TEST_ASSERT(xury_err_is_benign(XURY_ERR_TIMEOUT));
+
+    /* NOT_CALIBRATED is none of the three. */
+    TEST_ASSERT(!xury_err_is_retryable(XURY_ERR_NOT_CALIBRATED));
+    TEST_ASSERT(!xury_err_is_fatal(XURY_ERR_NOT_CALIBRATED));
+    TEST_ASSERT(!xury_err_is_benign(XURY_ERR_NOT_CALIBRATED));
 }
 
 /*
@@ -632,6 +703,36 @@ static void test_context_at_out_of_range(void)
 
 static void run_all_tests(void)
 {
+    /* Public strings */
+    TEST_RUN(test_strerror_ok);
+    TEST_RUN(test_strerror_timeout);
+    TEST_RUN(test_strerror_never_null);
+    TEST_RUN(test_err_tag);
+    TEST_RUN(test_err_is_ok_inline);
+    TEST_RUN(test_err_is_error_inline);
+
+    /* Public classes */
+    TEST_RUN(test_err_class);
+    TEST_RUN(test_err_class_name);
+
+    /* Internal table */
+    TEST_RUN(test_table_size_positive);
+    TEST_RUN(test_table_at_out_of_range);
+    TEST_RUN(test_table_at_valid);
+    TEST_RUN(test_table_contains_ok_first);
+    TEST_RUN(test_table_symbols_unique);
+    TEST_RUN(test_table_codes_unique);
+    TEST_RUN(test_by_symbol);
+    TEST_RUN(test_by_symbol_returns_same_as_info);
+
+    /* Internal info */
+    TEST_RUN(test_info_known);
+    TEST_RUN(test_info_unknown);
+    TEST_RUN(test_not_calibrated_exists);
+    TEST_RUN(test_not_calibrated_strerror);
+    TEST_RUN(test_not_calibrated_class);
+    TEST_RUN(test_research_class_distinct);
+
     /* errno mapping */
     TEST_RUN(test_from_errno_zero_is_ok);
     TEST_RUN(test_from_errno_common);
@@ -640,6 +741,7 @@ static void run_all_tests(void)
     TEST_RUN(test_to_errno_ok);
     TEST_RUN(test_to_errno_common);
     TEST_RUN(test_to_errno_unknown_falls_back_to_eio);
+    TEST_RUN(test_to_errno_not_calibrated_is_eio);
     TEST_RUN(test_errno_roundtrip_for_known_pairs);
 
     /* Classification */
