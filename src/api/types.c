@@ -1111,4 +1111,17 @@ xury_err_t xury_endpoint_from_string(const char *str,
     xury_family_t f = XURY_AF_UNSPEC;
     size_t n = 0;
     if (xury_parse_ip(out->ip, &f, a, sizeof(a), &n) != XURY_OK) {
-        return XURY
+        return XURY_ERR_BAD_ENDPOINT;
+    }
+    if (f != out->family) {
+        return XURY_ERR_BAD_FAMILY;
+    }
+
+    return XURY_OK;
+}
+
+/*
+ * ============================================================================
+ * END OF FILE
+ * ============================================================================
+ */
