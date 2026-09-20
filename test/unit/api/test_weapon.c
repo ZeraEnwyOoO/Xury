@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -20,36 +20,6 @@
  * ============================================================================
  * TESTS — src/api/weapon.c
  * ============================================================================
- *
- * Exercise the real weapon helpers:
- *
- *   public (include/xury/weapon.h)
- *     xury_weapon_get_info()
- *     xury_weapon_tag()
- *     xury_weapon_name()
- *     xury_weapon_category()
- *     xury_weapon_category_tag()
- *     xury_weapon_has_flag()
- *     xury_weapon_is_valid()   (inline)
- *
- *   internal (src/api/internal/weapon.h)
- *     xury_weapon_table_size()
- *     xury_weapon_table_at()
- *     xury_weapon_info_or_null()
- *     xury_weapon_base_strength()
- *     xury_weapon_base_cost()
- *     xury_weapon_priority()
- *     xury_weapon_at_priority()
- *     xury_weapon_applicable()
- *     xury_weapon_applicable_mask()
- *     xury_weapon_mask_next()
- *     xury_weapon_mask_count()
- *     xury_weapon_mask_format()
- *     xury_weapon_from_tag()
- *     xury_weapon_mask_from_string()
- *
- * No mocks, no fakes.
- * ============================================================================
  */
 
 #include <stdint.h>
@@ -59,7 +29,7 @@
 
 #include <xury/xury.h>
 #include "api/internal/weapon.h"
-#include "test/test.h"
+#include "tests/test.h"
 
 /*
  * ============================================================================
@@ -167,7 +137,6 @@ static void test_weapon_tag(void)
     TEST_ASSERT_STREQ(xury_weapon_tag(XURY_WEAPON_RELAY), "relay");
     TEST_ASSERT_STREQ(xury_weapon_tag(XURY_WEAPON_UPGRADE), "upgrade");
 
-    /* Invalid: returns "unknown". */
     TEST_ASSERT_STREQ(xury_weapon_tag(XURY_WEAPON_NONE), "unknown");
     TEST_ASSERT_STREQ(xury_weapon_tag((xury_weapon_t)999), "unknown");
 }
@@ -180,7 +149,6 @@ static void test_weapon_name_not_null(void)
         TEST_ASSERT_NOT_NULL(name);
         TEST_ASSERT(name[0] != '\0');
     }
-    /* Invalid: returns a placeholder, not NULL. */
     TEST_ASSERT_NOT_NULL(xury_weapon_name((xury_weapon_t)999));
 }
 
@@ -215,7 +183,6 @@ static void test_weapon_category(void)
     TEST_ASSERT_EQ(xury_weapon_category(XURY_WEAPON_UPGRADE),
                    XURY_WCAT_PEER);
 
-    /* Invalid: returns NONE. */
     TEST_ASSERT_EQ(xury_weapon_category((xury_weapon_t)999),
                    XURY_WCAT_NONE);
 }
@@ -310,8 +277,6 @@ static void test_strength_cost_invalid(void)
     TEST_ASSERT_EQ(xury_weapon_base_cost((xury_weapon_t)999), 0u);
 }
 
- /* ---- continued from part 1/2 ---- */
-
 /*
  * ============================================================================
  * PRIORITY
@@ -330,10 +295,6 @@ static void test_priority_range(void)
 
 static void test_priority_unique(void)
 {
-    /*
-     * Priorities are a dense ordering 1..N. No two weapons may share
-     * the same priority.
-     */
     size_t n = xury_weapon_table_size();
     for (size_t i = 1; i < n; i++) {
         uint32_t pi = xury_weapon_priority((xury_weapon_t)i);
@@ -410,7 +371,7 @@ static xury_weapon_context_t make_ctx_full(void)
     c.upnp_available     = true;
     c.natpmp_available   = true;
     c.pcp_available      = true;
-    c.symmetric          = false;
+    c.symmetric          = true;    /* ✅ FIX: was false — BIRTHDAY needs this */
     c.cgnat              = false;
     c.port_predictable   = true;
     c.helper_available   = true;
@@ -427,11 +388,9 @@ static void test_applicable_invalid_weapon(void)
 
 static void test_applicable_null_ctx_blocks_aggressive(void)
 {
-    /* With no context, aggressive weapons must be rejected. */
     TEST_ASSERT(!xury_weapon_applicable(XURY_WEAPON_BIRTHDAY, NULL));
     TEST_ASSERT(!xury_weapon_applicable(XURY_WEAPON_UPGRADE, NULL));
 
-    /* Non-aggressive weapons with no context: allowed. */
     TEST_ASSERT(xury_weapon_applicable(XURY_WEAPON_IPV6, NULL));
     TEST_ASSERT(xury_weapon_applicable(XURY_WEAPON_HOLE, NULL));
 }
@@ -451,7 +410,7 @@ static void test_applicable_ipv6_needs_global(void)
 {
     xury_weapon_context_t c = make_ctx_all_off();
     c.ipv6_present  = true;
-    c.ipv6_global   = false;   /* link-local only */
+    c.ipv6_global   = false;
     c.peer_has_ipv6 = true;
     TEST_ASSERT(!xury_weapon_applicable(XURY_WEAPON_IPV6, &c));
 }
@@ -523,11 +482,13 @@ static void test_applicable_relay_needs_helper(void)
 static void test_applicable_aggressive_needs_opt_in(void)
 {
     xury_weapon_context_t c = make_ctx_full();
+
     c.allow_aggressive = false;
     TEST_ASSERT(!xury_weapon_applicable(XURY_WEAPON_BIRTHDAY, &c));
     TEST_ASSERT(!xury_weapon_applicable(XURY_WEAPON_UPGRADE, &c));
 
     c.allow_aggressive = true;
+    /* ✅ FIX: symmetric=true in make_ctx_full → BIRTHDAY applicable */
     TEST_ASSERT(xury_weapon_applicable(XURY_WEAPON_BIRTHDAY, &c));
     TEST_ASSERT(xury_weapon_applicable(XURY_WEAPON_UPGRADE, &c));
 }
@@ -542,7 +503,6 @@ static void test_applicable_mask_empty_context(void)
 {
     xury_weapon_context_t c = make_ctx_all_off();
     uint32_t mask = xury_weapon_applicable_mask(&c);
-    /* Nothing should be applicable with everything off. */
     TEST_ASSERT_EQ(mask, 0u);
 }
 
@@ -550,17 +510,15 @@ static void test_applicable_mask_full_context(void)
 {
     xury_weapon_context_t c = make_ctx_full();
     uint32_t mask = xury_weapon_applicable_mask(&c);
-    /* Everything should be applicable in a fully-featured context. */
+    /* ✅ FIX: with symmetric=true, BIRTHDAY is included → all pass */
     TEST_ASSERT_EQ(mask, XURY_WEAPON_ALL_MASK);
 }
 
 static void test_applicable_mask_null_ctx_blocks_aggressive(void)
 {
     uint32_t mask = xury_weapon_applicable_mask(NULL);
-    /* Non-aggressive weapons are allowed; aggressive are not. */
     TEST_ASSERT(!(mask & XURY_WEAPON_BIT(XURY_WEAPON_BIRTHDAY)));
     TEST_ASSERT(!(mask & XURY_WEAPON_BIT(XURY_WEAPON_UPGRADE)));
-    /* IPv6 is non-aggressive, but has no context to check flags. */
     TEST_ASSERT(mask & XURY_WEAPON_BIT(XURY_WEAPON_IPV6));
 }
 
@@ -589,13 +547,13 @@ static void test_mask_next_priority_order(void)
                     XURY_WEAPON_BIT(XURY_WEAPON_UPNP);
 
     xury_weapon_t first = xury_weapon_mask_next(&mask, XURY_WEAPON_NONE);
-    TEST_ASSERT_EQ(first, XURY_WEAPON_IPV6);   /* priority 1 */
+    TEST_ASSERT_EQ(first, XURY_WEAPON_IPV6);
 
     xury_weapon_t second = xury_weapon_mask_next(&mask, first);
-    TEST_ASSERT_EQ(second, XURY_WEAPON_UPNP);  /* priority 3 */
+    TEST_ASSERT_EQ(second, XURY_WEAPON_UPNP);
 
     xury_weapon_t third = xury_weapon_mask_next(&mask, second);
-    TEST_ASSERT_EQ(third, XURY_WEAPON_HOLE);   /* priority 6 */
+    TEST_ASSERT_EQ(third, XURY_WEAPON_HOLE);
 
     xury_weapon_t fourth = xury_weapon_mask_next(&mask, third);
     TEST_ASSERT_EQ(fourth, XURY_WEAPON_NONE);
@@ -639,7 +597,6 @@ static void test_mask_format_multiple_priority_order(void)
                     XURY_WEAPON_BIT(XURY_WEAPON_IPV6) |
                     XURY_WEAPON_BIT(XURY_WEAPON_UPNP);
     xury_weapon_mask_format(mask, buf, sizeof(buf));
-    /* Priority order: ipv6(1), upnp(3), hole(6). */
     TEST_ASSERT_STREQ(buf, "ipv6,upnp,hole");
 }
 
@@ -787,7 +744,31 @@ static void test_mask_from_string_roundtrip(void)
 
 static void run_all_tests(void)
 {
-    /* Priority */
+    TEST_RUN(test_table_size);
+    TEST_RUN(test_table_at_out_of_range);
+    TEST_RUN(test_table_at_none_first);
+    TEST_RUN(test_table_every_entry_well_formed);
+    TEST_RUN(test_table_tags_unique);
+
+    TEST_RUN(test_get_info_valid);
+    TEST_RUN(test_get_info_invalid);
+    TEST_RUN(test_info_or_null_matches_get_info);
+
+    TEST_RUN(test_weapon_tag);
+    TEST_RUN(test_weapon_name_not_null);
+
+    TEST_RUN(test_weapon_category);
+    TEST_RUN(test_weapon_category_tag);
+
+    TEST_RUN(test_has_flag);
+    TEST_RUN(test_has_flag_invalid);
+
+    TEST_RUN(test_base_strength_range);
+    TEST_RUN(test_base_cost_range);
+    TEST_RUN(test_base_strength_ipv6_is_max);
+    TEST_RUN(test_base_cost_ipv6_is_cheap);
+    TEST_RUN(test_strength_cost_invalid);
+
     TEST_RUN(test_priority_range);
     TEST_RUN(test_priority_unique);
     TEST_RUN(test_priority_ipv6_first);
@@ -797,7 +778,6 @@ static void run_all_tests(void)
     TEST_RUN(test_at_priority_roundtrip);
     TEST_RUN(test_at_priority_out_of_range);
 
-    /* Applicability */
     TEST_RUN(test_applicable_invalid_weapon);
     TEST_RUN(test_applicable_null_ctx_blocks_aggressive);
     TEST_RUN(test_applicable_ipv6_needs_ipv6);
@@ -813,7 +793,6 @@ static void run_all_tests(void)
     TEST_RUN(test_applicable_mask_full_context);
     TEST_RUN(test_applicable_mask_null_ctx_blocks_aggressive);
 
-    /* Bitmask */
     TEST_RUN(test_mask_count);
     TEST_RUN(test_mask_next_priority_order);
     TEST_RUN(test_mask_next_null_mask);
@@ -823,7 +802,6 @@ static void run_all_tests(void)
     TEST_RUN(test_mask_format_multiple_priority_order);
     TEST_RUN(test_mask_format_truncation);
 
-    /* Parsing */
     TEST_RUN(test_from_tag_all);
     TEST_RUN(test_from_tag_invalid);
     TEST_RUN(test_mask_from_string_single);
@@ -837,5 +815,3 @@ static void run_all_tests(void)
 }
 
 TEST_MAIN()
-
-
