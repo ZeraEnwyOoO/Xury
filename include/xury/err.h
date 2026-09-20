@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -50,8 +50,9 @@
  *   PEER       -90..-99
  *   PLATFORM  -100..-109
  *   STATE     -110..-119
+ *   RESEARCH  -120..-129
  *
- * Reserved: below -119 for future categories.
+ * Reserved: below -129 for future categories.
  *
  * ============================================================================
  */
@@ -187,10 +188,23 @@ typedef enum {
 
     /*
      * ------------------------------------------------------------------------
+     * RESEARCH ERRORS (-120 .. -129)
+     * ------------------------------------------------------------------------
+     *
+     * These are NOT missing features. The code path exists and is
+     * reachable, but the constants it depends on have not yet been
+     * validated against real-world measurement.
+     *
+     * See docs/RESEARCH.md for the calibration plan.
+     */
+    XURY_ERR_NOT_CALIBRATED       = -120,  /* pending empirical calibration */
+
+    /*
+     * ------------------------------------------------------------------------
      * SENTINEL (do not use)
      * ------------------------------------------------------------------------
      */
-    XURY_ERR_MAX                  = -120,
+    XURY_ERR_MAX                  = -121,
 
 } xury_err_t;
 
@@ -235,6 +249,7 @@ typedef enum {
     XURY_ERR_CLASS_PLATFORM  = 8,
     XURY_ERR_CLASS_STATE     = 9,
     XURY_ERR_CLASS_UNKNOWN   = 10,
+    XURY_ERR_CLASS_RESEARCH  = 11,
 } xury_err_class_t;
 
 /*
