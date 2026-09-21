@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -68,6 +68,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <math.h>
 
 /*
  * ----------------------------------------------------------------------------
@@ -160,6 +161,38 @@ static void test_report_failure(const char *file,
                      #a, (long long)_a, #b, (long long)_b);            \
             test_report_failure(__FILE__, __LINE__, #a " != " #b,      \
                                 _buf);                                 \
+            return;                                                    \
+        }                                                              \
+    } while (0)
+
+/*
+ * Floating-point equality with absolute tolerance.
+ *
+ * Compares two double values. The comparison passes when
+ * |a - b| <= eps. NaN on either side is a failure, because NaN != NaN
+ * and any test that produces NaN is broken.
+ *
+ * The tolerance is absolute, not relative. Callers that need a
+ * relative comparison should compute the ratio themselves and use
+ * TEST_ASSERT_NEAR on that.
+ */
+#define TEST_ASSERT_NEAR(a, b, eps)                                    \
+    do {                                                               \
+        g_assert_total++;                                              \
+        double _a   = (double)(a);                                     \
+        double _b   = (double)(b);                                     \
+        double _eps = (double)(eps);                                   \
+        double _d   = _a - _b;                                         \
+        if (_d < 0.0) {                                                \
+            _d = -_d;                                                  \
+        }                                                              \
+        if (!(_d <= _eps)) {                                           \
+            char _buf[192];                                            \
+            snprintf(_buf, sizeof(_buf),                               \
+                     "%s=%g, %s=%g, diff=%g, eps=%g",                  \
+                     #a, _a, #b, _b, _d, _eps);                        \
+            test_report_failure(__FILE__, __LINE__,                    \
+                                #a " ~= " #b, _buf);                   \
             return;                                                    \
         }                                                              \
     } while (0)
