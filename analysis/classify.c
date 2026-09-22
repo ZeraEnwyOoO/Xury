@@ -62,6 +62,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <xury/err.h>
 #include <math.h>
 
 #include "scan/internal/math.h"
