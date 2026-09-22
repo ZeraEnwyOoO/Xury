@@ -46,7 +46,9 @@
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#include <fcntl.h>
+#include <fcntl.h>#include <ifaddrs.h>
+#include <net/if.h>
+
 
 #include <xury/types.h>
 #include <xury/err.h>
@@ -606,6 +608,103 @@ xury_err_t xury_platform_sock_wait_readable(xury_sock_t s,
     return XURY_OK;
 }
 
+/*
+ * ============================================================================
+ * INTERFACES (sensing)
+ * ============================================================================
+ *
+ * Enumerate the host's network interfaces via getifaddrs(3).
+ *
+ * getifaddrs returns one entry per (interface, address) pair. An
+ * interface with both IPv4 and IPv6 addresses appears twice. An
+ * interface with no address (e.g. a downed link) may not appear at
+ * all on some platforms, which is fine: we only report what the OS
+ * says.
+ *
+ * is_up and is_loopback come from the ifa_flags field. IFF_UP is
+ * set when the interface is administratively up. IFF_LOOPBACK
+ * identifies the loopback interface.
+ *
+ * The caller supplies a fixed-capacity array. If more interfaces
+ * exist than fit, we write cap entries and report cap; this is not
+ * an error.
+ */
+xury_err_t xury_platform_ifaces_list(xury_platform_iface_t *out,
+                                     size_t cap,
+                                     size_t *out_count)
+{
+    if (out == NULL || out_count == NULL) {
+        return XURY_ERR_INVAL;
+    }
+    *out_count = 0u;
+
+    struct ifaddrs *ifap = NULL;
+    if (getifaddrs(&ifap) != 0) {
+        return sock_errno_to_xury(errno);
+    }
+
+    size_t written = 0u;
+
+    for (struct ifaddrs *ifa = ifap;
+         ifa != NULL && written < cap;
+         ifa = ifa->ifa_next) {
+
+        if (ifa->ifa_addr == NULL) {
+            continue;
+        }
+
+        int fam = ifa->ifa_addr->sa_family;
+        if (fam != AF_INET && fam != AF_INET6) {
+            continue;
+        }
+
+        xury_platform_iface_t *slot = &out[written];
+        memset(slot, 0, sizeof(*slot));
+
+        /* Name: truncate to 31 chars + NUL. */
+        size_t nlen = strlen(ifa->ifa_name);
+        if (nlen >= sizeof(slot->name)) {
+            nlen = sizeof(slot->name) - 1u;
+        }
+        memcpy(slot->name, ifa->ifa_name, nlen);
+        slot->name[nlen] = '\0';
+
+        /* Flags. */
+        slot->is_up       = (ifa->ifa_flags & IFF_UP) != 0;
+        slot->is_loopback = (ifa->ifa_flags & IFF_LOOPBACK) != 0;
+
+        /* Address. */
+        if (fam == AF_INET) {
+            const struct sockaddr_in *sin =
+                (const struct sockaddr_in *)ifa->ifa_addr;
+            slot->family = XURY_AF_INET;
+            slot->addr.family = XURY_AF_INET;
+            slot->addr.port = 0;
+            if (inet_ntop(AF_INET, &sin->sin_addr,
+                          slot->addr.ip,
+                          sizeof(slot->addr.ip)) == NULL) {
+                continue;   /* skip malformed entry */
+            }
+        } else {
+            const struct sockaddr_in6 *sin6 =
+                (const struct sockaddr_in6 *)ifa->ifa_addr;
+            slot->family = XURY_AF_INET6;
+            slot->addr.family = XURY_AF_INET6;
+            slot->addr.port = 0;
+            if (inet_ntop(AF_INET6, &sin6->sin6_addr,
+                          slot->addr.ip,
+                          sizeof(slot->addr.ip)) == NULL) {
+                continue;
+            }
+        }
+
+        written++;
+    }
+
+    freeifaddrs(ifap);
+    *out_count = written;
+    return XURY_OK;
+}
 /*
  * ============================================================================
  * END OF FILE
