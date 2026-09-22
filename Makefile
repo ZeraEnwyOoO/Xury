@@ -4,7 +4,7 @@
 #
 # Layout:
 #   include/      public headers
-#   src/          api + core sources
+#   src/          api + core + scan + analysis + smart sources
 #   platform/     platform layer (posix, linux, android, ...)
 #   test/         unit tests
 #
@@ -62,6 +62,16 @@ LIB_SRCS := \
     src/core/bytes.c \
     src/core/rand.c \
     src/core/sock.c \
+    src/core/time.c \
+    src/scan/math.c \
+    src/scan/sensing.c \
+    src/scan/probing.c \
+    src/scan/scan.c \
+    src/analysis/classify.c \
+    src/analysis/score.c \
+    src/analysis/analysis.c \
+    src/smart/cache.c \
+    src/smart/early_term.c \
     $(PLATFORM_SRCS)
 
 LIB      := build/libxury.a
@@ -81,7 +91,16 @@ TEST_SRCS := \
     test/unit/core/test_endian.c \
     test/unit/core/test_bytes.c \
     test/unit/core/test_rand.c \
-    test/unit/core/test_sock.c
+    test/unit/core/test_sock.c \
+    test/unit/scan/test_math.c \
+    test/unit/scan/test_sensing.c \
+    test/unit/scan/test_probing.c \
+    test/unit/scan/test_scan.c \
+    test/unit/analysis/test_classify.c \
+    test/unit/analysis/test_score.c \
+    test/unit/analysis/test_analysis.c \
+    test/unit/smart/test_cache.c \
+    test/unit/smart/test_early_term.c
 
 TEST_BINS := $(TEST_SRCS:test/unit/%.c=build/tests/%)
 
@@ -120,11 +139,28 @@ build/obj/%.o: %.c
 
 tests: $(TEST_BINS)
 
+# Test rules, one per source subdirectory. Adding a new directory
+# means adding a new rule here. The alternative (a pattern that
+# captures any depth) is not portable across GNU make versions, so
+# the explicit form is used.
+
 build/tests/api/%: test/unit/api/%.c $(LIB)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(LIB) $(LDFLAGS) $(LDLIBS) -o $@
 
 build/tests/core/%: test/unit/core/%.c $(LIB)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(LIB) $(LDFLAGS) $(LDLIBS) -o $@
+
+build/tests/scan/%: test/unit/scan/%.c $(LIB)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(LIB) $(LDFLAGS) $(LDLIBS) -o $@
+
+build/tests/analysis/%: test/unit/analysis/%.c $(LIB)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(LIB) $(LDFLAGS) $(LDLIBS) -o $@
+
+build/tests/smart/%: test/unit/smart/%.c $(LIB)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(LIB) $(LDFLAGS) $(LDLIBS) -o $@
 
