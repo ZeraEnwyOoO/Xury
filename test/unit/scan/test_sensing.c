@@ -47,6 +47,7 @@
 #include <string.h>
 
 #include <xury/xury.h>
+#include "api/internal/types.h"
 #include "scan/internal/sensing.h"
 #include "test/test.h"
 
