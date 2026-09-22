@@ -46,7 +46,8 @@
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#include <fcntl.h>#include <ifaddrs.h>
+#include <fcntl.h>
+#include <ifaddrs.h>
 #include <net/if.h>
 
 
