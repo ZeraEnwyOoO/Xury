@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -16,78 +16,41 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#ifndef XURY_SCAN_INTERNAL_MATH_H
-#define XURY_SCAN_INTERNAL_MATH_H
+#ifndef XURY_SCAN_H
+#define XURY_SCAN_H
 
 /*
  * ============================================================================
- * XURY SCAN — MATH (F.3a)
+ * XURY SCAN — PILLAR 1
  * ============================================================================
  *
- * Pure statistical helpers used by the scan layer.
+ * The scan phase analyzes the local network and produces a result that
+ * drives weapon selection.
  *
- * This is F.3a in the three-layer split documented in docs/RESEARCH.md:
+ * Scan sub-phases:
  *
- *   F.3a  Pure math           deterministic, no NAT knowledge
- *   F.3b  Classification      heuristic, documented thresholds
- *   F.3c  Scoring             requires empirical calibration
+ *   SENSING  — ask the OS for local facts
+ *              (interfaces, IPv6, gateway, MAC)
  *
- * F.3a makes NO claims about NAT behavior. It computes numbers from
- * numbers. Every function here is:
+ *   PROBING  — actively measure the network
+ *              (port behavior, TTL, RTT, peer reachability)
  *
- *   - pure (no side effects, no I/O, no allocation)
- *   - deterministic (same inputs -> same outputs)
- *   - independent of the engine, platform, and config
+ *   MATH     — compute patterns from probe data
+ *              (variance, slope, probability)
  *
- * Nothing in this file knows what a port is, what a NAT is, or what a
- * "predictable" sequence means. That interpretation lives in F.3b
- * (src/analysis/classify.c).
+ *   MEMORY   — load cached scan from previous runs
  *
- * ----------------------------------------------------------------------------
- * The sequence model
- * ----------------------------------------------------------------------------
+ *   ANALYSIS — combine everything into a decision
+ *              (NAT type, label, recommended weapon)
  *
- * Every function takes a sequence of uint16_t values as:
+ * Scan is called by:
+ *   - xury_scan()      — explicit scan
+ *   - xury_connect()   — internally, before strike
  *
- *     const uint16_t *v, size_t n
+ * Scan is SKIPPED when:
+ *   - cached result is fresh and router matches
+ *   - IPv6 global is detected (early term)
  *
- * The implicit x-axis is the sample index: x_i = i, for i in [0, n).
- * The y-axis is v[i].
- *
- * This matches how port samples are collected: a sequence of observed
- * external ports, in the order they were observed.
- *
- * ----------------------------------------------------------------------------
- * Edge case policy
- * ----------------------------------------------------------------------------
- *
- * All functions are total. They never fail, never return NaN, and
- * never read past the array. On degenerate input they return 0:
- *
- *   v == NULL        -> 0
- *   n == 0           -> 0
- *   variance, n == 1 -> 0        (single sample has no spread)
- *   slope,    n <  2 -> 0        (line needs two points)
- *   is_monotonic, n < 2 -> true  (vacuously monotone)
- *   predict_next, n == 0 -> 0
- *
- * Callers that need to distinguish "0 because empty" from "0 because
- * the math really is 0" must check n themselves. The math layer does
- * not carry that distinction.
- *
- * ----------------------------------------------------------------------------
- * Implementation notes
- * ----------------------------------------------------------------------------
- *
- * - All accumulators are double. With n up to a few dozen samples and
- *   values up to 65535, the sums stay far inside double's exact
- *   integer range, so no overflow or precision loss is a concern.
- *
- * - predict_next uses round(slope) and clamps the result to [1, 65535].
- *   The clamp is a math-layer default, not a NAT-behavior claim.
- *
- * This header depends only on <stdint.h> and <stddef.h>. It must
- * remain so.
  * ============================================================================
  */
 
@@ -95,85 +58,382 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+#include <xury/version.h>
+#include <xury/types.h>
+#include <xury/err.h>
+#include <xury/weapon.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /*
  * ============================================================================
- * CENTRAL TENDENCY
+ * SUB-PHASE STATUS
+ * ============================================================================
+ *
+ * Each sub-phase reports whether it ran and how long it took.
+ * Hosts may use this for diagnostics.
+ */
+
+typedef enum {
+    XURY_SCAN_SUB_SKIPPED = 0,  /* not run */
+    XURY_SCAN_SUB_OK      = 1,  /* completed */
+    XURY_SCAN_SUB_PARTIAL = 2,  /* completed with gaps */
+    XURY_SCAN_SUB_FAILED  = 3,  /* could not complete */
+} xury_scan_sub_status_t;
+
+/*
+ * ============================================================================
+ * SENSING RESULT
+ * ============================================================================
+ *
+ * Facts queried from the OS. No packets sent.
+ *
+ * Populated by: src/scan/sensing.c
+ * Platform:     src/platform/{linux,android}/...
+ */
+
+typedef struct {
+    /* Local IPv4 (first non-loopback) */
+    xury_endpoint_t   local_ipv4;
+
+    /* Local IPv6 (first non-link-local if any) */
+    xury_endpoint_t   local_ipv6;
+
+    /* True if a global IPv6 (2000::/3) is present */
+    bool              ipv6_global;
+
+    /* True if at least one non-loopback interface is up */
+    bool              has_interface;
+
+    /* Primary gateway (IPv4 or IPv6) */
+    xury_endpoint_t   gateway;
+
+    /* Gateway MAC address, zeroed if unknown */
+    uint8_t           gateway_mac[6];
+
+    /* True if gateway_mac is valid */
+    bool              gateway_mac_known;
+
+    /* Detected local network type */
+    xury_network_type_t net_type;
+
+    /* Interface name (Linux: "wlan0"; Android: "" if unknown) */
+    char              interface_name[32];
+
+    /* Duration of the sensing sub-phase (ms) */
+    uint32_t          elapsed_ms;
+
+    /* Sub-phase status */
+    xury_scan_sub_status_t status;
+} xury_sensing_result_t;
+
+/*
+ * ============================================================================
+ * PROBING RESULT
+ * ============================================================================
+ *
+ * Active measurements. Sends a small number of packets to the peer or
+ * gateway. No servers involved.
+ *
+ * Populated by: src/scan/probing.c
+ */
+
+/* Maximum number of observed external ports kept from probing. */
+#define XURY_PROBE_PORT_SAMPLES 8
+
+/* Maximum number of RTT samples kept. */
+#define XURY_PROBE_RTT_SAMPLES  8
+
+typedef struct {
+    /* Local ports used for the probe (host byte order) */
+    uint16_t  local_ports[XURY_PROBE_PORT_SAMPLES];
+
+    /* External ports reported back by the peer (host byte order) */
+    uint16_t  external_ports[XURY_PROBE_PORT_SAMPLES];
+
+    /* Number of valid samples in the arrays above */
+    uint8_t   sample_count;
+
+    /* True if peer reported any external port at all */
+    bool      external_ports_known;
+
+    /* RTT samples in milliseconds */
+    uint32_t  rtt_samples[XURY_PROBE_RTT_SAMPLES];
+
+    /* Number of valid RTT samples */
+    uint8_t   rtt_count;
+
+    /* Average RTT (ms). 0 if no samples. */
+    uint32_t  rtt_avg_ms;
+
+    /* TTL to the gateway (0 if unknown) */
+    uint8_t   ttl_gateway;
+
+    /* TTL to the peer (0 if unknown) */
+    uint8_t   ttl_peer;
+
+    /* True if the peer endpoint was reachable via UDP probe */
+    bool      peer_reachable;
+
+    /* True if the peer answered an IPv6 probe */
+    bool      peer_supports_ipv6;
+
+    /* Duration of the probing sub-phase (ms) */
+    uint32_t  elapsed_ms;
+
+    /* Sub-phase status */
+    xury_scan_sub_status_t status;
+} xury_probing_result_t;
+
+/*
+ * ============================================================================
+ * MATH RESULT
+ * ============================================================================
+ *
+ * Derived quantities from probing. Pure computation, no I/O.
+ *
+ * Populated by: src/scan/math.c
+ */
+
+typedef struct {
+    /* Variance of external ports (0 if less than 2 samples) */
+    double   port_variance;
+
+    /* Linear regression slope of external ports over index */
+    double   port_slope;
+
+    /* True if port sequence looks predictable */
+    bool     port_predictable;
+
+    /* Predicted next external port (0 if not predictable) */
+    uint16_t predicted_port;
+
+    /* Probability estimates, 0.0 .. 1.0 */
+    double   p_ipv6;
+    double   p_lan;
+    double   p_upnp;
+    double   p_natpmp;
+    double   p_pcp;
+    double   p_hole;
+    double   p_predict;
+    double   p_birthday;
+    double   p_mirror;
+    double   p_relay;
+    double   p_upgrade;
+
+    /* Duration of the math sub-phase (ms) */
+    uint32_t elapsed_ms;
+
+    /* Sub-phase status */
+    xury_scan_sub_status_t status;
+} xury_math_result_t;
+
+/*
+ * ============================================================================
+ * MEMORY RESULT
+ * ============================================================================
+ *
+ * Cached scan data loaded from a previous run.
+ *
+ * If the cache is fresh and the router matches, the scan may short-circuit.
+ *
+ * Populated by: src/smart/cache.c
+ */
+
+typedef struct {
+    /* True if a cached entry was loaded */
+    bool     loaded;
+
+    /* True if the cached entry is still valid for this network */
+    bool     valid;
+
+    /* Cached NAT type (if valid) */
+    xury_nat_type_t   cached_nat_type;
+
+    /* Cached NAT label (if valid) */
+    xury_nat_label_t  cached_nat_label;
+
+    /* Cached CGNAT type (if valid) */
+    xury_cgnat_type_t cached_cgnat_type;
+
+    /* Weapons that succeeded on this network previously */
+    uint32_t cached_success_weapons;
+
+    /* Weapons that failed repeatedly on this network */
+    uint32_t cached_failed_weapons;
+
+    /* Age of the cache entry in seconds */
+    uint32_t age_sec;
+
+    /* Sub-phase status */
+    xury_scan_sub_status_t status;
+} xury_memory_result_t;
+
+/*
+ * ============================================================================
+ * ANALYSIS RESULT
+ * ============================================================================
+ *
+ * Final decision from the scan.
+ *
+ * Populated by: src/analysis/analysis.c
+ */
+
+typedef struct {
+    /* Final NAT classification */
+    xury_nat_type_t   nat_type;
+
+    /* Coarse label derived from nat_type */
+    xury_nat_label_t  nat_label;
+
+    /* CGNAT sub-classification (only meaningful if nat_type == CGNAT) */
+    xury_cgnat_type_t cgnat_type;
+
+    /* Recommended weapon for the STRIKE phase */
+    xury_weapon_t     recommended_weapon;
+
+    /* Confidence in the recommendation, 0..100 */
+    uint8_t           recommended_confidence;
+
+    /* True if IPv6 global is available and peer supports it */
+    bool              ipv6_viable;
+
+    /* True if peer is on the same LAN */
+    bool              lan_viable;
+
+    /* True if peer endpoint is known and reachable */
+    bool              peer_reachable;
+
+    /* Duration of the analysis sub-phase (ms) */
+    uint32_t          elapsed_ms;
+
+    /* Sub-phase status */
+    xury_scan_sub_status_t status;
+} xury_analysis_result_t;
+
+/*
+ * ============================================================================
+ * SCAN RESULT (composite)
+ * ============================================================================
+ *
+ * The complete scan output. This is what xury_scan() returns, and what
+ * the on_scan_done hook receives.
+ *
+ * All sub-results are inlined so that the caller gets one contiguous
+ * struct with no pointers to free.
+ *
+ * Lifetime: owned by the caller. The engine does not retain it.
+ */
+
+typedef struct {
+    /* Sub-results */
+    xury_sensing_result_t  sensing;
+    xury_probing_result_t  probing;
+    xury_math_result_t     math;
+    xury_memory_result_t   memory;
+    xury_analysis_result_t analysis;
+
+    /* Aggregate timing */
+    uint32_t total_elapsed_ms;
+
+    /* True if the scan used a fast path (cache hit or early term) */
+    bool     fast_path;
+
+    /* True if the scan was early-terminated due to a strong signal */
+    bool     early_terminated;
+
+    /* True if the scan completed successfully */
+    bool     ok;
+} xury_scan_result_t;
+
+/*
+ * ============================================================================
+ * PUBLIC API — SCAN
  * ============================================================================
  */
 
 /*
- * Arithmetic mean of the sequence.
+ * Run a full scan.
  *
- * Returns 0 when v == NULL or n == 0.
+ * Uses the internal cache. May short-circuit if the cache is fresh.
+ *
+ * Arguments:
+ *   e    — engine handle (must be started)
+ *   peer — optional peer hint; may be NULL
+ *   out  — caller-provided result; must not be NULL
+ *
+ * Returns:
+ *   XURY_OK               — scan completed, out filled
+ *   XURY_ERR_INVAL        — e or out is NULL
+ *   XURY_ERR_NOT_READY    — engine not started
+ *   XURY_ERR_SCAN_IN_PROGRESS — scan already running
+ *   XURY_ERR_TIMEOUT      — scan exceeded scan_timeout_ms
+ *   XURY_ERR_IO           — platform I/O error
+ *
+ * Threading:
+ *   Blocks the calling thread.
+ *   Not reentrant: only one scan at a time per engine.
  */
-double xury_math_mean(const uint16_t *v, size_t n);
+xury_err_t xury_scan(xury_engine_t *e,
+                     const xury_endpoint_t *peer,
+                     xury_scan_result_t *out);
 
 /*
- * Population variance:
+ * Run a quick scan (sensing + cached memory only).
  *
- *     variance = sum((v[i] - mean)^2) / n
+ * Never sends packets. Fast. Useful to get local IPv6 / LAN info.
  *
- * Divides by n, not n - 1. This measures the spread of the observed
- * samples themselves, not an estimate of an underlying distribution.
- *
- * Returns 0 when v == NULL, n == 0, or n == 1.
+ * Threading: same as xury_scan().
  */
-double xury_math_variance(const uint16_t *v, size_t n);
+xury_err_t xury_scan_quick(xury_engine_t *e,
+                           xury_scan_result_t *out);
 
 /*
- * Least-squares slope of v[i] against i.
+ * Invalidate the internal scan cache.
  *
- *     slope = sum((i - xbar) * (v[i] - ybar))
- *           / sum((i - xbar)^2)
+ * Next xury_scan() will do a full scan.
  *
- * where xbar is the mean of the indices and ybar is the mean of v.
- *
- * Returns 0 when v == NULL or n < 2.
+ * Threading: safe to call any time on the engine's thread.
  */
-double xury_math_slope(const uint16_t *v, size_t n);
-
-/*
- * ============================================================================
- * SEQUENCE SHAPE
- * ============================================================================
- */
-
-/*
- * True if the sequence is non-strictly increasing:
- *
- *     v[i] <= v[i + 1]   for all i in [0, n - 1)
- *
- * Non-strict because some NAT implementations reuse a port, producing
- * a repeat rather than a strict increase.
- *
- * Returns true when v == NULL or n < 2 (vacuously monotone).
- */
-bool xury_math_is_monotonic(const uint16_t *v, size_t n);
-
-/*
- * Predict the next value in the sequence.
- *
- * Formula:
- *
- *     next = last + round(slope)
- *
- * where slope is xury_math_slope(v, n) and last is v[n - 1].
- *
- * The result is clamped to the valid uint16 port range [1, 65535].
- * Port 0 is not a legal destination port and is never returned.
- *
- * Returns 0 when v == NULL or n == 0.
- */
-uint16_t xury_math_predict_next(const uint16_t *v, size_t n);
+xury_err_t xury_scan_invalidate(xury_engine_t *e);
 
 /*
  * ============================================================================
- * END OF XURY SCAN INTERNAL MATH HEADER
+ * HELPERS — STRING CONVERSION
+ * ============================================================================
+ *
+ * Stable, human-readable strings for logging and diagnostics.
+ *
+ * All return a pointer to a static const string. Never NULL.
+ */
+
+const char *xury_nat_type_str(xury_nat_type_t t);
+const char *xury_nat_label_str(xury_nat_label_t l);
+const char *xury_cgnat_type_str(xury_cgnat_type_t t);
+const char *xury_network_type_str(xury_network_type_t n);
+const char *xury_scan_sub_status_str(xury_scan_sub_status_t s);
+
+/*
+ * ============================================================================
+ * VALIDATION
  * ============================================================================
  */
 
-#endif /* XURY_SCAN_INTERNAL_MATH_H */
+static inline bool xury_scan_result_ok(const xury_scan_result_t *r)
+{
+    return r != NULL && r->ok;
+}
+
+#ifdef __cplusplus
+}
+#endif
+
+/*
+ * ============================================================================
+ * END OF XURY SCAN HEADER
+ * ============================================================================
+ */
+
+#endif /* XURY_SCAN_H */
