@@ -2,14 +2,13 @@
 # XURY NAT ENGINE — Makefile
 # ═══════════════════════════════════════════════════════════
 #
-# Layout (all at repo root):
+# Layout:
 #   include/      public headers
-#   api/          public API layer
-#   core/         foundation (mem, log, endian, bytes, rand, sock, time)
-#   platform/     OS layer (posix, linux, android, ...)
-#   scan/         Phase F — NAT scan
-#   analysis/     Phase G — NAT analysis
-#   smart/        Phase J — NAT smart
+#   src/          api + core sources
+#   platform/     platform layer (posix, linux, android, ...)
+#   scan/         scan phase (F)
+#   analysis/     analysis phase (G)
+#   smart/        smart phase (J)
 #   test/         unit tests
 #
 # ═══════════════════════════════════════════════════════════
@@ -47,26 +46,26 @@ else
             Supported: linux. Planned: darwin, android.)
 endif
 
-CPPFLAGS += -Iinclude -I. -Iplatform
+CPPFLAGS += -Iinclude -Isrc -Iplatform -I.
 
 # ───────────────────────────────────────────────────────────
 # LIBRARY SOURCES
 # ───────────────────────────────────────────────────────────
 LIB_SRCS := \
-    api/version.c \
-    api/types.c \
-    api/err.c \
-    api/weapon.c \
-    api/config.c \
-    api/hooks.c \
-    api/xury.c \
-    core/mem.c \
-    core/log.c \
-    core/endian.c \
-    core/bytes.c \
-    core/rand.c \
-    core/sock.c \
-    core/time.c \
+    src/api/version.c \
+    src/api/types.c \
+    src/api/err.c \
+    src/api/weapon.c \
+    src/api/config.c \
+    src/api/hooks.c \
+    src/api/xury.c \
+    src/core/mem.c \
+    src/core/log.c \
+    src/core/endian.c \
+    src/core/bytes.c \
+    src/core/rand.c \
+    src/core/sock.c \
+    src/core/time.c \
     scan/math.c \
     scan/sensing.c \
     scan/probing.c \
@@ -143,7 +142,8 @@ build/obj/%.o: %.c
 
 tests: $(TEST_BINS)
 
-# Test rules, one per source subdirectory.
+# Test rules, one per source subdirectory. Adding a new directory
+# means adding a new rule here.
 
 build/tests/api/%: test/unit/api/%.c $(LIB)
 	@mkdir -p $(dir $@)
@@ -188,5 +188,3 @@ check: run
 
 clean:
 	rm -rf build
- 
- 
