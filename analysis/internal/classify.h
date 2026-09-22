@@ -83,6 +83,9 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+#include <xury/err.h>
+#include <xury/scan.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
