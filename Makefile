@@ -4,7 +4,7 @@
 #
 # Layout:
 #   include/      public headers
-#   src/          api + core + scan + analysis + smart sources
+#   src/          api + core + scan + analysis + smart
 #   platform/     platform layer (posix, linux, android, ...)
 #   test/         unit tests
 #
@@ -63,13 +63,13 @@ LIB_SRCS := \
     src/core/rand.c \
     src/core/sock.c \
     src/core/time.c \
-    src/scan/math.c \
+    src/scan/scan.c \
     src/scan/sensing.c \
     src/scan/probing.c \
-    src/scan/scan.c \
+    src/scan/math.c \
+    src/analysis/analysis.c \
     src/analysis/classify.c \
     src/analysis/score.c \
-    src/analysis/analysis.c \
     src/smart/cache.c \
     src/smart/early_term.c \
     $(PLATFORM_SRCS)
@@ -92,6 +92,7 @@ TEST_SRCS := \
     test/unit/core/test_bytes.c \
     test/unit/core/test_rand.c \
     test/unit/core/test_sock.c \
+    test/unit/core/test_time.c \
     test/unit/scan/test_math.c \
     test/unit/scan/test_sensing.c \
     test/unit/scan/test_probing.c \
@@ -138,11 +139,6 @@ build/obj/%.o: %.c
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
 
 tests: $(TEST_BINS)
-
-# Test rules, one per source subdirectory. Adding a new directory
-# means adding a new rule here. The alternative (a pattern that
-# captures any depth) is not portable across GNU make versions, so
-# the explicit form is used.
 
 build/tests/api/%: test/unit/api/%.c $(LIB)
 	@mkdir -p $(dir $@)
