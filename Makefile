@@ -18,7 +18,7 @@ AR       ?= ar
 CFLAGS   ?= -std=c11 -Wall -Wextra -O2 -g
 CPPFLAGS ?=
 LDFLAGS  ?=
-LDLIBS   ?=
+LDLIBS   ?= -lm
 
 PLATFORM ?= $(shell uname -s | tr '[:upper:]' '[:lower:]')
 
