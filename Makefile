@@ -2,10 +2,14 @@
 # XURY NAT ENGINE — Makefile
 # ═══════════════════════════════════════════════════════════
 #
-# Layout:
+# Layout (all at repo root):
 #   include/      public headers
-#   src/          api + core + scan + analysis + smart
-#   platform/     platform layer (posix, linux, android, ...)
+#   api/          public API layer
+#   core/         foundation (mem, log, endian, bytes, rand, sock, time)
+#   platform/     OS layer (posix, linux, android, ...)
+#   scan/         Phase F — NAT scan
+#   analysis/     Phase G — NAT analysis
+#   smart/        Phase J — NAT smart
 #   test/         unit tests
 #
 # ═══════════════════════════════════════════════════════════
@@ -43,35 +47,35 @@ else
             Supported: linux. Planned: darwin, android.)
 endif
 
-CPPFLAGS += -Iinclude -Isrc -Iplatform -I.
+CPPFLAGS += -Iinclude -I. -Iplatform
 
 # ───────────────────────────────────────────────────────────
 # LIBRARY SOURCES
 # ───────────────────────────────────────────────────────────
 LIB_SRCS := \
-    src/api/version.c \
-    src/api/types.c \
-    src/api/err.c \
-    src/api/weapon.c \
-    src/api/config.c \
-    src/api/hooks.c \
-    src/api/xury.c \
-    src/core/mem.c \
-    src/core/log.c \
-    src/core/endian.c \
-    src/core/bytes.c \
-    src/core/rand.c \
-    src/core/sock.c \
-    src/core/time.c \
-    src/scan/scan.c \
-    src/scan/sensing.c \
-    src/scan/probing.c \
-    src/scan/math.c \
-    src/analysis/analysis.c \
-    src/analysis/classify.c \
-    src/analysis/score.c \
-    src/smart/cache.c \
-    src/smart/early_term.c \
+    api/version.c \
+    api/types.c \
+    api/err.c \
+    api/weapon.c \
+    api/config.c \
+    api/hooks.c \
+    api/xury.c \
+    core/mem.c \
+    core/log.c \
+    core/endian.c \
+    core/bytes.c \
+    core/rand.c \
+    core/sock.c \
+    core/time.c \
+    scan/math.c \
+    scan/sensing.c \
+    scan/probing.c \
+    scan/scan.c \
+    analysis/classify.c \
+    analysis/score.c \
+    analysis/analysis.c \
+    smart/cache.c \
+    smart/early_term.c \
     $(PLATFORM_SRCS)
 
 LIB      := build/libxury.a
@@ -92,7 +96,6 @@ TEST_SRCS := \
     test/unit/core/test_bytes.c \
     test/unit/core/test_rand.c \
     test/unit/core/test_sock.c \
-    test/unit/core/test_time.c \
     test/unit/scan/test_math.c \
     test/unit/scan/test_sensing.c \
     test/unit/scan/test_probing.c \
@@ -140,6 +143,8 @@ build/obj/%.o: %.c
 
 tests: $(TEST_BINS)
 
+# Test rules, one per source subdirectory.
+
 build/tests/api/%: test/unit/api/%.c $(LIB)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(LIB) $(LDFLAGS) $(LDLIBS) -o $@
@@ -183,3 +188,5 @@ check: run
 
 clean:
 	rm -rf build
+ 
+ 
