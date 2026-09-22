@@ -65,6 +65,7 @@
 
 #include <xury/xury.h>
 #include "scan/internal/scan.h"
+#include "smart/internal/cache.h"
 #include "test/test.h"
 
 /*
