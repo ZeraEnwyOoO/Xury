@@ -1,4 +1,3 @@
- 
  /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
@@ -45,6 +44,16 @@
  * Android note:
  *   This file is not compiled on Android. Android's ConnectivityManager
  *   is queried through JNI instead (src/platform/android/jni.c).
+ *
+ * ----------------------------------------------------------------------------
+ * Timeout policy
+ * ----------------------------------------------------------------------------
+ *
+ * Xury must never hang on a platform query. A netlink exchange that
+ * does not complete in XURY_NL_TIMEOUT_US is abandoned and reported
+ * as failure. The caller (xury_scan_sensing) treats a gateway failure
+ * as PARTIAL, not as a fatal error; the rest of the scan continues.
+ *
  * ============================================================================
  */
 
@@ -57,6 +66,7 @@
 
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/time.h>
 #include <arpa/inet.h>
 
 #include <linux/netlink.h>
@@ -64,7 +74,7 @@
 
 #include <xury/types.h>
 #include <xury/err.h>
-#include <xury/xury.h>  
+#include <xury/xury.h>
 
 #include "platform/platform.h"
 
@@ -75,6 +85,17 @@
  */
 
 #define NL_BUFSIZE 8192
+
+/*
+ * Receive timeout, in microseconds.
+ *
+ * 500 ms is long enough for a healthy kernel to answer an
+ * RTM_GETROUTE — it is a memory lookup, not a network operation —
+ * and short enough that a scan does not stall noticeably if the
+ * kernel is unresponsive (sandboxed environments, missing
+ * CAP_NET_ADMIN, kernel bugs).
+ */
+#define XURY_NL_TIMEOUT_US (500 * 1000)
 
 static int nl_open(void)
 {
@@ -93,6 +114,17 @@ static int nl_open(void)
         errno = saved;
         return -1;
     }
+
+    /*
+     * Bound every recv() on this socket. Without this, a kernel that
+     * never answers would block the scan indefinitely. Xury must not
+     * hang on a platform query.
+     */
+    struct timeval tv;
+    tv.tv_sec  = 0;
+    tv.tv_usec = XURY_NL_TIMEOUT_US;
+    (void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
     return fd;
 }
 
@@ -126,6 +158,14 @@ static int nl_request(int fd, struct nlmsghdr *req, nl_cb_t cb, void *ud)
         if (n < 0) {
             if (errno == EINTR) {
                 continue;
+            }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                /*
+                 * SO_RCVTIMEO expired. The kernel did not answer
+                 * within XURY_NL_TIMEOUT_US. Report a timeout so the
+                 * caller can proceed with a PARTIAL result.
+                 */
+                return -ETIMEDOUT;
             }
             return -errno;
         }
