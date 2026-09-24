@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -33,8 +33,8 @@
  *   F.3c  Scoring             requires empirical calibration
  *
  * F.3b sits directly on top of F.3a. It calls the pure math helpers
- * (mean, variance, slope) and turns their numeric output into a
- * labeled pattern with a confidence level.
+ * (variance, slope) and turns their numeric output into a labeled
+ * pattern with a confidence level.
  *
  * ----------------------------------------------------------------------------
  * What this layer does NOT do
@@ -57,7 +57,7 @@
  * ----------------------------------------------------------------------------
  *
  *   INSUFFICIENT_DATA  not enough samples to say anything
- *   SEQUENTIAL_LIKE    step is near 1, variance is low
+ *   SEQUENTIAL_LIKE    step is near 1, delta variance is low
  *   FIXED_STEP_LIKE    step is a near-constant integer greater than 1
  *   RANDOM_LIKE        no consistent step
  *
@@ -69,10 +69,29 @@
  *   HIGH     at least 4 * min_samples
  *
  * ----------------------------------------------------------------------------
+ * The variance decision
+ * ----------------------------------------------------------------------------
+ *
+ * The variance checked by this layer is the variance of consecutive
+ * DELTAS (the steps between ports), not the variance of the raw port
+ * values. This was decided in docs/RESEARCH_addendum_variance_decision.md.
+ *
+ * Rationale: {5,6,7,8} and {50000,50001,50002,50003} have identical
+ * step patterns and must classify the same way. Value variance made
+ * classification depend on absolute port magnitude, which is unrelated
+ * to predictability. Delta variance makes the check independent of
+ * magnitude, and matches RESEARCH.md's original "delta ≈ constant,
+ * small variance" wording.
+ *
+ * ----------------------------------------------------------------------------
  * Dependencies
  * ----------------------------------------------------------------------------
  *
  * - src/scan/internal/math.h   (F.3a, completed)
+ * - <xury/err.h>               (xury_err_t)
+ * - <xury/scan.h>              (xury_scan_result_t is not used here, but
+ *                               the public scan types are part of the
+ *                               layer's vocabulary)
  * - <stdint.h>, <stddef.h>, <stdbool.h>
  *
  * No engine, no platform, no allocation, no I/O. Pure logic.
@@ -104,7 +123,7 @@ typedef enum {
     XURY_PATTERN_INSUFFICIENT_DATA = 0,
 
     /*
-     * Step is near 1 and variance is low. The classic "router
+     * Step is near 1 and delta variance is low. The classic "router
      * increments the port by one" case.
      */
     XURY_PATTERN_SEQUENTIAL_LIKE   = 1,
@@ -116,8 +135,8 @@ typedef enum {
     XURY_PATTERN_FIXED_STEP_LIKE   = 2,
 
     /*
-     * No consistent step. Variance is above threshold, or the slope
-     * is not near an integer.
+     * No consistent step. Delta variance is above threshold, or the
+     * slope is not near an integer.
      */
     XURY_PATTERN_RANDOM_LIKE       = 3,
 } xury_port_pattern_t;
@@ -152,9 +171,14 @@ typedef enum {
  *     It must be chosen by the caller. There is no library default.
  *
  *   variance_threshold
- *     Maximum variance of the observed ports for the sequence to be
- *     considered "consistent". Above this value, the pattern is
- *     RANDOM_LIKE regardless of slope.
+ *     Maximum variance of consecutive deltas (steps) between ports
+ *     for the sequence to be considered "consistent". Above this
+ *     value, the pattern is RANDOM_LIKE regardless of slope.
+ *
+ *     Deltas, not raw ports: this makes the check independent of
+ *     absolute port magnitude. A sequence starting at 5 and a
+ *     sequence starting at 50000 with the same step pattern classify
+ *     identically.
  *
  *     This value is an open research question (docs/RESEARCH.md §4).
  *     It must be chosen by the caller. There is no library default.
@@ -162,6 +186,8 @@ typedef enum {
  *   slope_tolerance
  *     Maximum absolute difference between the computed slope and the
  *     nearest integer for the slope to be considered "near-integer".
+ *     The slope is the least-squares slope of the raw port values
+ *     against the sample index.
  *
  *     This value is an open research question (docs/RESEARCH.md §4).
  *     It must be chosen by the caller. There is no library default.
@@ -263,4 +289,4 @@ const char *xury_confidence_name(xury_confidence_t c);
  */
 
 #endif /* XURY_ANALYSIS_INTERNAL_CLASSIFY_H */
-
+ 
