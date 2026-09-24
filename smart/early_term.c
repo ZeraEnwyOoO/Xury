@@ -66,22 +66,29 @@
  *
  *   sensing.status is OK or PARTIAL
  *   sensing.ipv6_global is true
- *   probing is non-NULL
- *   probing.status is OK
- *   probing.peer_supports_ipv6 is true
- *   memory.status is OK
+ *   probing did NOT produce a usable result (probing_has_data is
+ *     false: NULL, or status is PARTIAL/FAILED)
+ *   memory.status is SKIPPED
  *   memory.loaded is true
  *   memory.valid is false
  *   memory.cached_nat_type is not XURY_NAT_UNKNOWN
  *
- * That is: the local and peer IPv6 facts already fired Rule 1 on a
- * previous scan for this network, but the cache entry is too old to
- * be trusted as a full answer. The classification does not need to
- * be recomputed, but the freshness bookkeeping does.
+ * That is: local sensing already confirms global IPv6, but probing
+ * has not yet established whether the peer supports IPv6. A stale-
+ * but-classified cache entry from a previous scan fills the gap.
  *
- * Note that Rule 1 already covers the same IPv6 facts when the cache
- * is fresh; Rule 3 exists for the stale-cache case. If both apply,
- * Rule 1 wins by order.
+ * Rule 3 deliberately does NOT fire when probing produced a result,
+ * even a confirmed negative one. Fresh data (positive or negative)
+ * is more current than a stale cache entry:
+ *
+ *   - probing confirms peer IPv6 support -> Rule 1 already fired.
+ *   - probing confirms peer has NO IPv6    -> Rule 3 must not
+ *     override the current observation with a stale prior.
+ *
+ * Rule 1 and Rule 3 are therefore mutually exclusive by construction:
+ * Rule 1 requires probing_has_data(p) && peer_supports_ipv6; Rule 3
+ * requires !probing_has_data(p). Whichever applies, the ordering
+ * (Rule 1 before Rule 3) is still part of the contract.
  *
  * ----------------------------------------------------------------------------
  * Dependencies
@@ -195,7 +202,21 @@ static bool rule_cached_ipv6(const xury_sensing_result_t *s,
                              const xury_memory_result_t *m,
                              const xury_probing_result_t *p)
 {
-    if (!rule_ipv6_global(s, p)) {
+    /*
+     * Rule 3 fills the gap when probing has not yet produced any
+     * result: local sensing already confirms global IPv6, but the
+     * peer's IPv6 support is genuinely unestablished. A stale-but-
+     * classified cache entry is used as a prior in that case.
+     *
+     * If probing HAS produced a result, Rule 3 must not fire — even
+     * a confirmed negative answer is more current than the stale
+     * cache, and Rule 1 handles the confirmed-positive case. The
+     * "probing_has_data(p)" check below covers both.
+     */
+    if (!sensing_has_data(s) || !s->ipv6_global) {
+        return false;
+    }
+    if (probing_has_data(p)) {
         return false;
     }
     return memory_is_stale_but_classified(m);
@@ -266,4 +287,5 @@ const char *xury_early_term_reason_name(xury_early_term_reason_t r)
  * ============================================================================
  * END OF FILE
  * ============================================================================
- */
+ */ 
+ 
