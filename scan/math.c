@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -83,27 +83,98 @@ double xury_math_variance(const uint16_t *v, size_t n)
     return acc / (double)n;
 }
 
+/*
+ * ============================================================================
+ * MEDIAN
+ * ============================================================================
+ *
+ * Population-style median: sort the values, then take the middle
+ * element for odd n, or the average of the two middle elements for
+ * even n.
+ *
+ * The input array is not modified; we copy into a fixed-size stack
+ * buffer and sort that.
+ *
+ * The stack buffer is bounded by XURY_MATH_MEDIAN_MAX. Inputs larger
+ * than that are truncated to the first XURY_MATH_MEDIAN_MAX elements:
+ * the median of a truncated sample is still a useful estimate, and
+ * refusing to compute would be worse for a diagnostic aid. Callers
+ * that care about the exact bound should ensure n <= the cap.
+ *
+ * Insertion sort is used: n is small (bounded by the probe sample
+ * count, at most a few dozen), and insertion sort has no allocation,
+ * no recursion, and predictable behavior.
+ *
+ * See docs/RESEARCH_addendum_variance_decision.md for why F.3b uses
+ * this instead of the least-squares slope for step estimation.
+ */
+
+#define XURY_MATH_MEDIAN_MAX 64u
+
+double xury_math_median(const uint16_t *v, size_t n)
+{
+    if (v == NULL || n == 0u) {
+        return 0.0;
+    }
+
+    size_t m = (n > XURY_MATH_MEDIAN_MAX) ? XURY_MATH_MEDIAN_MAX : n;
+
+    uint16_t sorted[XURY_MATH_MEDIAN_MAX];
+    for (size_t i = 0; i < m; i++) {
+        sorted[i] = v[i];
+    }
+
+    /* Insertion sort. Stable, in-place, no allocation. */
+    for (size_t i = 1u; i < m; i++) {
+        uint16_t key = sorted[i];
+        size_t j = i;
+        while (j > 0u && sorted[j - 1u] > key) {
+            sorted[j] = sorted[j - 1u];
+            j--;
+        }
+        sorted[j] = key;
+    }
+
+    if ((m & 1u) != 0u) {
+        return (double)sorted[m / 2u];
+    }
+
+    double a = (double)sorted[m / 2u - 1u];
+    double b = (double)sorted[m / 2u];
+    return (a + b) / 2.0;
+}
+
+/*
+ * ============================================================================
+ * SLOPE
+ * ============================================================================
+ *
+ * Least-squares slope of v[i] against i.
+ *
+ *     slope = Sxy / Sxx
+ *
+ * where:
+ *
+ *     xbar = mean of i           = (n - 1) / 2
+ *     ybar = mean of v[i]        = xury_math_mean(v, n)
+ *     Sxy  = sum((i - xbar) * (v[i] - ybar))
+ *     Sxx  = sum((i - xbar)^2)
+ *
+ * xbar is computed in closed form to avoid a second pass over the
+ * indices.
+ *
+ * This is a general-purpose primitive. It is no longer called by
+ * F.3b's classification (which uses xury_math_median instead, for
+ * outlier robustness), but it remains valid and may be used by other
+ * layers.
+ */
+
 double xury_math_slope(const uint16_t *v, size_t n)
 {
     if (v == NULL || n < 2u) {
         return 0.0;
     }
 
-    /*
-     * Least-squares slope of v[i] against i.
-     *
-     *     slope = Sxy / Sxx
-     *
-     * where:
-     *
-     *     xbar = mean of i           = (n - 1) / 2
-     *     ybar = mean of v[i]        = xury_math_mean(v, n)
-     *     Sxy  = sum((i - xbar) * (v[i] - ybar))
-     *     Sxx  = sum((i - xbar)^2)
-     *
-     * xbar is computed in closed form to avoid a second pass over
-     * the indices.
-     */
     const double xbar = ((double)n - 1.0) / 2.0;
     const double ybar = xury_math_mean(v, n);
 
@@ -158,6 +229,10 @@ uint16_t xury_math_predict_next(const uint16_t *v, size_t n)
      * a real-valued estimate of that step.
      *
      * This is a math-layer default, not a claim about NAT behavior.
+     *
+     * This is a general-purpose primitive. F.3b no longer uses it for
+     * classification; classify.c computes its prediction directly
+     * from the median delta, for outlier robustness.
      */
     const double slope = xury_math_slope(v, n);
     const double last  = (double)v[n - 1u];
