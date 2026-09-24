@@ -25,6 +25,7 @@
  *
  *   xury_math_mean()
  *   xury_math_variance()
+ *   xury_math_median()
  *   xury_math_slope()
  *   xury_math_is_monotonic()
  *   xury_math_predict_next()
@@ -175,6 +176,109 @@ static void test_variance_population_not_sample(void)
      */
     const uint16_t v[5] = { 1u, 2u, 3u, 4u, 5u };
     TEST_ASSERT_NEAR(xury_math_variance(v, 5), 2.0, EPS);
+}
+
+/*
+ * ============================================================================
+ * MEDIAN
+ * ============================================================================
+ */
+
+static void test_median_null(void)
+{
+    TEST_ASSERT_NEAR(xury_math_median(NULL, 5), 0.0, EPS);
+}
+
+static void test_median_zero_n(void)
+{
+    const uint16_t v[1] = { 42u };
+    TEST_ASSERT_NEAR(xury_math_median(v, 0), 0.0, EPS);
+}
+
+static void test_median_single(void)
+{
+    const uint16_t v[1] = { 7u };
+    TEST_ASSERT_NEAR(xury_math_median(v, 1), 7.0, EPS);
+}
+
+static void test_median_odd_count(void)
+{
+    /* Unsorted input: {3, 1, 2} -> sorted {1, 2, 3} -> median 2 */
+    const uint16_t v[3] = { 3u, 1u, 2u };
+    TEST_ASSERT_NEAR(xury_math_median(v, 3), 2.0, EPS);
+}
+
+static void test_median_even_count(void)
+{
+    /* Unsorted input: {4, 1, 3, 2} -> sorted {1, 2, 3, 4} -> (2+3)/2 */
+    const uint16_t v[4] = { 4u, 1u, 3u, 2u };
+    TEST_ASSERT_NEAR(xury_math_median(v, 4), 2.5, EPS);
+}
+
+static void test_median_all_same(void)
+{
+    const uint16_t v[5] = { 42u, 42u, 42u, 42u, 42u };
+    TEST_ASSERT_NEAR(xury_math_median(v, 5), 42.0, EPS);
+}
+
+static void test_median_robust_to_single_outlier(void)
+{
+    /*
+     * The deltas from a sequential sequence with one repeated port.
+     *
+     * v = {1, 0, 1, 1}
+     * sorted = {0, 1, 1, 1}
+     * median = (1 + 1) / 2 = 1.0
+     *
+     * The 0 is the outlier; the median is unaffected by it.
+     */
+    const uint16_t v[4] = { 1u, 0u, 1u, 1u };
+    TEST_ASSERT_NEAR(xury_math_median(v, 4), 1.0, EPS);
+}
+
+static void test_median_fixed_step_with_outlier(void)
+{
+    /*
+     * The deltas from a step-2 sequence with one repeated port.
+     *
+     * v = {2, 0, 2, 2}
+     * sorted = {0, 2, 2, 2}
+     * median = (2 + 2) / 2 = 2.0
+     */
+    const uint16_t v[4] = { 2u, 0u, 2u, 2u };
+    TEST_ASSERT_NEAR(xury_math_median(v, 4), 2.0, EPS);
+}
+
+static void test_median_unsorted_input(void)
+{
+    /*
+     * The input need not be sorted. The function sorts a copy.
+     *
+     * v = {9, 3, 7, 1, 5}
+     * sorted = {1, 3, 5, 7, 9}
+     * median = 5
+     */
+    const uint16_t v[5] = { 9u, 3u, 7u, 1u, 5u };
+    TEST_ASSERT_NEAR(xury_math_median(v, 5), 5.0, EPS);
+}
+
+static void test_median_does_not_modify_input(void)
+{
+    /*
+     * The function takes a const pointer; callers must be able to
+     * rely on the input being unchanged. Verify by snapshotting.
+     */
+    uint16_t v[5] = { 9u, 3u, 7u, 1u, 5u };
+    uint16_t snapshot[5];
+    for (size_t i = 0; i < 5u; i++) {
+        snapshot[i] = v[i];
+    }
+
+    (void)xury_math_median(v, 5);
+
+    for (size_t i = 0; i < 5u; i++) {
+        TEST_ASSERT_EQ(v[i], snapshot[i]);
+    }
 }
 
 /*
@@ -402,11 +506,6 @@ static void test_predict_rounds_slope(void)
      * Fractional slope must be rounded to nearest integer.
      *
      * v = {10, 12, 13}
-     * xbar = 1, ybar = 35/3
-     * Sxy = (-1)(10 - 35/3) + 0 + (1)(13 - 35/3)
-     *     = (-1)(-5/3) + (1)(4/3)
-     *     = 5/3 + 4/3 = 3
-     * Sxx = 1 + 0 + 1 = 2
      * slope = 1.5
      * round(1.5) = 2  (round half away from zero)
      * last = 13
@@ -483,6 +582,18 @@ static void run_all_tests(void)
     TEST_RUN(test_variance_known_sequence);
     TEST_RUN(test_variance_population_not_sample);
 
+    /* Median */
+    TEST_RUN(test_median_null);
+    TEST_RUN(test_median_zero_n);
+    TEST_RUN(test_median_single);
+    TEST_RUN(test_median_odd_count);
+    TEST_RUN(test_median_even_count);
+    TEST_RUN(test_median_all_same);
+    TEST_RUN(test_median_robust_to_single_outlier);
+    TEST_RUN(test_median_fixed_step_with_outlier);
+    TEST_RUN(test_median_unsorted_input);
+    TEST_RUN(test_median_does_not_modify_input);
+
     /* Slope */
     TEST_RUN(test_slope_null);
     TEST_RUN(test_slope_zero_n);
@@ -518,4 +629,5 @@ static void run_all_tests(void)
     TEST_RUN(test_predict_never_zero_port);
 }
 
-TEST_MAIN()
+TEST_MAIN() 
+ 
