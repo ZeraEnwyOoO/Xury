@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -56,9 +56,19 @@
  *
  *   CACHED_IPV6
  *     The cache says the network was IPv6-viable the last time it
- *     was seen, and the local sensing still reports global IPv6.
- *     The peer's IPv6 support is not yet known, so this rule fires
- *     only when the caller has already established it.
+ *     was seen, and the local sensing still reports global IPv6, but
+ *     probing has not yet produced any result — the peer's IPv6
+ *     support is genuinely unestablished. A confirmed answer from
+ *     probing (positive or negative) is treated as more current than
+ *     a stale cache entry, so Rule 3 does not fire when probing has
+ *     produced a result:
+ *
+ *       - a confirmed positive answer is handled by Rule 1;
+ *       - a confirmed negative answer must not be overridden by a
+ *         stale prior.
+ *
+ *     Rule 3 exists only to fill the gap when probing has not
+ *     answered at all.
  *
  * No other rules exist. If a future change wants to short-circuit on
  * something else, it must add a new xury_early_term_reason_t value
@@ -80,6 +90,14 @@
  * The order is part of the contract. A caller that wants a different
  * precedence must not reorder these checks; it must add a new reason
  * with an explicit position.
+ *
+ * Rule 1 and Rule 3 are mutually exclusive by construction:
+ *
+ *   Rule 1 requires probing_has_data(p) && peer_supports_ipv6.
+ *   Rule 3 requires !probing_has_data(p).
+ *
+ * Whichever applies, the ordering (Rule 1 before Rule 3) remains the
+ * documented contract.
  *
  * ----------------------------------------------------------------------------
  * Status semantics
