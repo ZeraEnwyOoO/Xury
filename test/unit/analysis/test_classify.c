@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -34,6 +34,22 @@
  * pattern is unambiguous. They are test fixtures, not library
  * defaults. The library has no defaults; every threshold is supplied
  * by the caller.
+ *
+ * ----------------------------------------------------------------------------
+ * Test design notes
+ * ----------------------------------------------------------------------------
+ *
+ * The classifier uses two design decisions that shape these tests:
+ *
+ *   1. Variance is measured over consecutive DELTAS, not raw port
+ *      values. See docs/RESEARCH_addendum_variance_decision.md.
+ *
+ *   2. The step MAGNITUDE is the median of the absolute deltas, not
+ *      the least-squares slope. Direction is not part of the pattern;
+ *      it only affects predicted_next.
+ *
+ * Tests that pin specific behaviors are named after what they
+ * actually verify, not after the old slope-based design.
  * ============================================================================
  */
 
@@ -200,7 +216,7 @@ static void test_sequential_step_one_longer(void)
 static void test_sequential_predicted_is_not_zero(void)
 {
     /*
-     * Predicted ports must never be 0; the math layer clamps to 1.
+     * Predicted ports must never be 0; the clamp floor is 1.
      */
     const uint16_t ports[4] = { 10u, 11u, 12u, 13u };
     xury_classify_cfg_t cfg = cfg_default();
@@ -212,6 +228,51 @@ static void test_sequential_predicted_is_not_zero(void)
     TEST_ASSERT(out.predicted_next >= 1u);
 }
 
+static void test_sequential_negative_direction(void)
+{
+    /*
+     * Decreasing sequence with constant magnitude step 1.
+     *
+     * Direction does not affect pattern classification: {50,49,48,47}
+     * and {47,48,49,50} are equally predictable, so both classify as
+     * SEQUENTIAL_LIKE (step magnitude = 1).
+     *
+     * Direction is preserved for predicted_next, however; see
+     * test_predict_decreasing_direction below.
+     */
+    const uint16_t ports[4] = { 50u, 49u, 48u, 47u };
+    xury_classify_cfg_t cfg = cfg_default();
+    xury_port_classification_t out;
+
+    xury_err_t rc = xury_classify_port_pattern(ports, 4, &cfg, &out);
+    TEST_ASSERT_EQ(rc, XURY_OK);
+    TEST_ASSERT_EQ(out.pattern, XURY_PATTERN_SEQUENTIAL_LIKE);
+}
+
+static void test_sequential_with_single_repeat(void)
+{
+    /*
+     * A single repeat in an otherwise sequential sequence.
+     *
+     * The classifier uses MEDIAN delta, not least-squares slope, so a
+     * single outlier delta (the 0 from the repeated port) does not
+     * move the step estimate. The deltas are {1, 0, 1, 1}; sorted
+     * {0, 1, 1, 1}; median = 1.0. Delta variance = 0.1875, well
+     * below 2.0.
+     *
+     * Result: SEQUENTIAL_LIKE. The old slope-based design collapsed
+     * the slope to 0.7 and misclassified this as RANDOM_LIKE; see
+     * docs/RESEARCH_addendum_variance_decision.md.
+     */
+    const uint16_t ports[5] = { 100u, 101u, 101u, 102u, 103u };
+    xury_classify_cfg_t cfg = cfg_default();
+    xury_port_classification_t out;
+
+    xury_err_t rc = xury_classify_port_pattern(ports, 5, &cfg, &out);
+    TEST_ASSERT_EQ(rc, XURY_OK);
+    TEST_ASSERT_EQ(out.pattern, XURY_PATTERN_SEQUENTIAL_LIKE);
+}
+
 /*
  * ============================================================================
  * FIXED_STEP_LIKE
@@ -221,7 +282,7 @@ static void test_sequential_predicted_is_not_zero(void)
 static void test_fixed_step_two(void)
 {
     /*
-     * Step of 2. Variance is zero; slope rounds to 2.
+     * Step of 2. Deltas are {2,2,2,2}; median 2.0; variance 0.0.
      */
     const uint16_t ports[5] = { 100u, 102u, 104u, 106u, 108u };
     xury_classify_cfg_t cfg = cfg_default();
@@ -245,27 +306,13 @@ static void test_fixed_step_ten(void)
     TEST_ASSERT_EQ(out.predicted_next, 240u);
 }
 
-static void test_fixed_step_negative(void)
-{
-    /*
-     * Decreasing sequence with constant step -1. Slope is near -1;
-     * nearest integer is -1, not 1, so this is FIXED_STEP_LIKE.
-     */
-    const uint16_t ports[4] = { 50u, 49u, 48u, 47u };
-    xury_classify_cfg_t cfg = cfg_default();
-    xury_port_classification_t out;
-
-    xury_err_t rc = xury_classify_port_pattern(ports, 4, &cfg, &out);
-    TEST_ASSERT_EQ(rc, XURY_OK);
-    TEST_ASSERT_EQ(out.pattern, XURY_PATTERN_FIXED_STEP_LIKE);
-}
-
 static void test_fixed_step_zero(void)
 {
     /*
-     * Constant sequence. Slope is 0, variance is 0. Nearest integer
-     * is 0, not 1, so FIXED_STEP_LIKE. This is the honest label:
-     * the step is constant, but it is not the +1 case.
+     * Constant sequence. Deltas are {0,0,0}; median 0.0; variance 0.0.
+     * Nearest integer to 0 is 0, not 1, so FIXED_STEP_LIKE. This is
+     * the honest label: the step is constant, but it is not the +1
+     * case.
      */
     const uint16_t ports[4] = { 500u, 500u, 500u, 500u };
     xury_classify_cfg_t cfg = cfg_default();
@@ -286,7 +333,7 @@ static void test_fixed_step_zero(void)
 static void test_random_high_variance(void)
 {
     /*
-     * Variance is far above 2.0. Even though the slope may be
+     * Variance is far above 2.0. Even though the median may be
      * near-integer by coincidence, the variance gate fires first.
      */
     const uint16_t ports[6] = {
@@ -301,20 +348,21 @@ static void test_random_high_variance(void)
     TEST_ASSERT_EQ(out.predicted_next, 0u);
 }
 
-static void test_random_slope_not_near_integer(void)
+static void test_random_median_step_not_near_integer(void)
 {
     /*
-     * Low variance, but the step alternates in a way that makes the
-     * least-squares slope fractional and outside the tolerance.
-     *
-     * Sequence: {100, 102, 100, 102, 100, 102}
-     * Mean is 101, variance is small (1.0), but the slope oscillates
-     * and lands near 0.0 ... actually let's pick something that
-     * clearly has a non-integer slope.
+     * Under the median-delta design, this sequence is NOT random.
      *
      * Sequence: {100, 103, 105, 108, 110, 113}
-     * Steps: 3, 2, 3, 2, 3 -> average about 2.5.
-     * Slope is 2.5, nearest integer is 2 or 3, distance 0.5 > 0.1.
+     * Deltas:   {3, 2, 3, 2, 3}
+     * Delta variance: 0.24  (< 2.0 threshold -> consistent)
+     * Median delta:   3.0   (near-integer -> step magnitude 3)
+     *
+     * Under the old slope-based design, this classified as RANDOM
+     * because the least-squares slope (2.5) was not near-integer.
+     * Under the median design, the representative step is 3 and the
+     * variance gate confirms consistency, so FIXED_STEP_LIKE is the
+     * correct answer.
      */
     const uint16_t ports[6] = { 100u, 103u, 105u, 108u, 110u, 113u };
     xury_classify_cfg_t cfg = cfg_default();
@@ -322,8 +370,7 @@ static void test_random_slope_not_near_integer(void)
 
     xury_err_t rc = xury_classify_port_pattern(ports, 6, &cfg, &out);
     TEST_ASSERT_EQ(rc, XURY_OK);
-    TEST_ASSERT_EQ(out.pattern, XURY_PATTERN_RANDOM_LIKE);
-    TEST_ASSERT_EQ(out.predicted_next, 0u);
+    TEST_ASSERT_EQ(out.pattern, XURY_PATTERN_FIXED_STEP_LIKE);
 }
 
 static void test_random_predicted_is_zero(void)
@@ -432,28 +479,66 @@ static void test_confidence_medium_also_for_random(void)
 
 /*
  * ============================================================================
- * BOUNDARY / MISC
+ * PREDICTION DIRECTION
  * ============================================================================
+ *
+ * Pattern classification ignores direction, but predicted_next must
+ * preserve it. These tests verify the majority-vote direction helper
+ * is actually used on the prediction path.
  */
 
-static void test_sequential_with_single_repeat(void)
+static void test_predict_decreasing_direction(void)
 {
     /*
-     * A single repeat in an otherwise sequential sequence raises the
-     * variance slightly. With a permissive threshold, the pattern
-     * remains SEQUENTIAL_LIKE; with a tight threshold, it becomes
-     * RANDOM_LIKE.
-     *
-     * We use the permissive default and expect SEQUENTIAL_LIKE.
+     * {50, 49, 48, 47} is a decreasing sequential sequence. The
+     * predicted next port is 47 - 1 = 46, NOT 47 + 1 = 48.
      */
-    const uint16_t ports[5] = { 100u, 101u, 101u, 102u, 103u };
-    xury_classify_cfg_t cfg = cfg_default();  /* variance_threshold 2.0 */
-
+    const uint16_t ports[4] = { 50u, 49u, 48u, 47u };
+    xury_classify_cfg_t cfg = cfg_default();
     xury_port_classification_t out;
-    xury_err_t rc = xury_classify_port_pattern(ports, 5, &cfg, &out);
+
+    xury_err_t rc = xury_classify_port_pattern(ports, 4, &cfg, &out);
     TEST_ASSERT_EQ(rc, XURY_OK);
     TEST_ASSERT_EQ(out.pattern, XURY_PATTERN_SEQUENTIAL_LIKE);
+    TEST_ASSERT_EQ(out.predicted_next, 46u);
 }
+
+static void test_predict_increasing_direction(void)
+{
+    /*
+     * Mirror of the above: increasing sequence predicts last + 1.
+     */
+    const uint16_t ports[4] = { 47u, 48u, 49u, 50u };
+    xury_classify_cfg_t cfg = cfg_default();
+    xury_port_classification_t out;
+
+    xury_err_t rc = xury_classify_port_pattern(ports, 4, &cfg, &out);
+    TEST_ASSERT_EQ(rc, XURY_OK);
+    TEST_ASSERT_EQ(out.pattern, XURY_PATTERN_SEQUENTIAL_LIKE);
+    TEST_ASSERT_EQ(out.predicted_next, 51u);
+}
+
+static void test_predict_decreasing_fixed_step(void)
+{
+    /*
+     * Decreasing fixed-step sequence. Predicted next is
+     * last - 10 = 170, not last + 10 = 190.
+     */
+    const uint16_t ports[4] = { 200u, 190u, 180u, 170u };
+    xury_classify_cfg_t cfg = cfg_default();
+    xury_port_classification_t out;
+
+    xury_err_t rc = xury_classify_port_pattern(ports, 4, &cfg, &out);
+    TEST_ASSERT_EQ(rc, XURY_OK);
+    TEST_ASSERT_EQ(out.pattern, XURY_PATTERN_FIXED_STEP_LIKE);
+    TEST_ASSERT_EQ(out.predicted_next, 160u);
+}
+
+/*
+ * ============================================================================
+ * STRING HELPERS
+ * ============================================================================
+ */
 
 static void test_pattern_name(void)
 {
@@ -509,16 +594,17 @@ static void run_all_tests(void)
     TEST_RUN(test_sequential_step_one);
     TEST_RUN(test_sequential_step_one_longer);
     TEST_RUN(test_sequential_predicted_is_not_zero);
+    TEST_RUN(test_sequential_negative_direction);
+    TEST_RUN(test_sequential_with_single_repeat);
 
     /* Fixed-step-like */
     TEST_RUN(test_fixed_step_two);
     TEST_RUN(test_fixed_step_ten);
-    TEST_RUN(test_fixed_step_negative);
     TEST_RUN(test_fixed_step_zero);
 
     /* Random-like */
     TEST_RUN(test_random_high_variance);
-    TEST_RUN(test_random_slope_not_near_integer);
+    TEST_RUN(test_random_median_step_not_near_integer);
     TEST_RUN(test_random_predicted_is_zero);
 
     /* Confidence */
@@ -528,8 +614,12 @@ static void run_all_tests(void)
     TEST_RUN(test_confidence_high_well_above);
     TEST_RUN(test_confidence_medium_also_for_random);
 
-    /* Boundary / misc */
-    TEST_RUN(test_sequential_with_single_repeat);
+    /* Prediction direction */
+    TEST_RUN(test_predict_decreasing_direction);
+    TEST_RUN(test_predict_increasing_direction);
+    TEST_RUN(test_predict_decreasing_fixed_step);
+
+    /* String helpers */
     TEST_RUN(test_pattern_name);
     TEST_RUN(test_confidence_name);
 }
