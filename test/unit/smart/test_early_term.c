@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -38,6 +38,16 @@
  *   - Rule ordering: IPV6_GLOBAL beats CACHED_FRESH beats CACHED_IPV6
  *   - NONE when nothing fires
  *   - Reason names are stable and never NULL
+ *
+ * ----------------------------------------------------------------------------
+ * Rule 3 setup note
+ * ----------------------------------------------------------------------------
+ *
+ * Rule 3 (CACHED_IPV6) fires only when probing has NOT produced a
+ * usable result: probing_has_data(p) is false. The tests that
+ * exercise Rule 3 use probing_partial() (status = PARTIAL) rather
+ * than probing_ok_peer_v6(), because the latter would satisfy
+ * Rule 1 and preempt Rule 3. See early_term.c for the full rule.
  * ============================================================================
  */
 
@@ -387,18 +397,27 @@ static void test_cached_fresh_requires_status_ok(void)
  * ============================================================================
  * RULE 3 — CACHED_IPV6
  * ============================================================================
+ *
+ * Rule 3 fires only when probing has NOT produced a usable result.
+ * These tests use probing_partial() (status = PARTIAL) so that
+ * probing_has_data(p) is false. Using probing_ok_peer_v6() would
+ * satisfy Rule 1 and preempt Rule 3, which is what the previous
+ * (buggy) test setup did.
  */
 
 static void test_cached_ipv6_fires(void)
 {
     /*
-     * IPv6 facts hold, cache is stale but classified.
-     * Rule 1 does not fire because cache is not fresh; Rule 2 does
-     * not fire because cache is not valid; Rule 3 fires.
+     * Local IPv6 confirmed; probing has not yet produced a usable
+     * result; cache is stale but classified.
+     *
+     * Rule 1 does not fire (probing_has_data is false).
+     * Rule 2 does not fire (cache is not valid).
+     * Rule 3 fires.
      */
     xury_sensing_result_t s = sensing_ok_with_v6();
     xury_memory_result_t  m = memory_stale_classified();
-    xury_probing_result_t p = probing_ok_peer_v6();
+    xury_probing_result_t p = probing_partial();
     xury_early_term_decision_t d;
 
     TEST_ASSERT_EQ(xury_early_term_decide(&s, &m, &p, &d), XURY_OK);
@@ -406,11 +425,32 @@ static void test_cached_ipv6_fires(void)
     TEST_ASSERT_EQ(d.reason, XURY_EARLY_TERM_CACHED_IPV6);
 }
 
+static void test_cached_ipv6_fires_without_probing(void)
+{
+    /*
+     * Same as test_cached_ipv6_fires but probing was not run at all.
+     * The NULL probing pointer is the "peer IPv6 support is not yet
+     * known" case the header documents.
+     */
+    xury_sensing_result_t s = sensing_ok_with_v6();
+    xury_memory_result_t  m = memory_stale_classified();
+    xury_early_term_decision_t d;
+
+    TEST_ASSERT_EQ(xury_early_term_decide(&s, &m, NULL, &d), XURY_OK);
+    TEST_ASSERT(d.terminate);
+    TEST_ASSERT_EQ(d.reason, XURY_EARLY_TERM_CACHED_IPV6);
+}
+
 static void test_cached_ipv6_requires_classified_cache(void)
 {
+    /*
+     * Same as test_cached_ipv6_fires but the cache entry carries no
+     * classification (cached_nat_type == UNKNOWN). Rule 3 requires
+     * a non-unknown classification to fire, so nothing terminates.
+     */
     xury_sensing_result_t s = sensing_ok_with_v6();
     xury_memory_result_t  m = memory_stale_unknown();
-    xury_probing_result_t p = probing_ok_peer_v6();
+    xury_probing_result_t p = probing_partial();
     xury_early_term_decision_t d;
 
     TEST_ASSERT_EQ(xury_early_term_decide(&s, &m, &p, &d), XURY_OK);
@@ -420,10 +460,14 @@ static void test_cached_ipv6_requires_classified_cache(void)
 
 static void test_cached_ipv6_requires_loaded(void)
 {
+    /*
+     * Same as test_cached_ipv6_fires but the cache entry was not
+     * loaded. Rule 3 requires memory.loaded, so nothing terminates.
+     */
     xury_sensing_result_t s = sensing_ok_with_v6();
     xury_memory_result_t  m = memory_stale_classified();
     m.loaded = false;
-    xury_probing_result_t p = probing_ok_peer_v6();
+    xury_probing_result_t p = probing_partial();
     xury_early_term_decision_t d;
 
     TEST_ASSERT_EQ(xury_early_term_decide(&s, &m, &p, &d), XURY_OK);
@@ -433,10 +477,28 @@ static void test_cached_ipv6_requires_loaded(void)
 static void test_cached_ipv6_requires_ipv6_facts(void)
 {
     /*
-     * Cache is stale and classified, but no local/peer IPv6.
-     * Nothing fires.
+     * Cache is stale and classified, probing has no result, but
+     * local sensing does not report global IPv6. Nothing fires.
      */
     xury_sensing_result_t s = sensing_ok_no_v6();
+    xury_memory_result_t  m = memory_stale_classified();
+    xury_probing_result_t p = probing_partial();
+    xury_early_term_decision_t d;
+
+    TEST_ASSERT_EQ(xury_early_term_decide(&s, &m, &p, &d), XURY_OK);
+    TEST_ASSERT(!d.terminate);
+    TEST_ASSERT_EQ(d.reason, XURY_EARLY_TERM_NONE);
+}
+
+static void test_cached_ipv6_does_not_override_confirmed_negative(void)
+{
+    /*
+     * Probing produced a usable result and that result says the peer
+     * does NOT support IPv6. A confirmed negative is more current
+     * than a stale cache entry, so Rule 3 must not fire and nothing
+     * terminates.
+     */
+    xury_sensing_result_t s = sensing_ok_with_v6();
     xury_memory_result_t  m = memory_stale_classified();
     xury_probing_result_t p = probing_ok_no_v6();
     xury_early_term_decision_t d;
@@ -444,6 +506,23 @@ static void test_cached_ipv6_requires_ipv6_facts(void)
     TEST_ASSERT_EQ(xury_early_term_decide(&s, &m, &p, &d), XURY_OK);
     TEST_ASSERT(!d.terminate);
     TEST_ASSERT_EQ(d.reason, XURY_EARLY_TERM_NONE);
+}
+
+static void test_cached_ipv6_does_not_override_confirmed_positive(void)
+{
+    /*
+     * Probing produced a usable result and that result says the peer
+     * DOES support IPv6. Rule 1 fires first (IPv6_GLOBAL), not
+     * Rule 3. The reason is IPV6_GLOBAL, not CACHED_IPV6.
+     */
+    xury_sensing_result_t s = sensing_ok_with_v6();
+    xury_memory_result_t  m = memory_stale_classified();
+    xury_probing_result_t p = probing_ok_peer_v6();
+    xury_early_term_decision_t d;
+
+    TEST_ASSERT_EQ(xury_early_term_decide(&s, &m, &p, &d), XURY_OK);
+    TEST_ASSERT(d.terminate);
+    TEST_ASSERT_EQ(d.reason, XURY_EARLY_TERM_IPV6_GLOBAL);
 }
 
 /*
@@ -568,9 +647,12 @@ static void run_all_tests(void)
 
     /* Rule 3: CACHED_IPV6 */
     TEST_RUN(test_cached_ipv6_fires);
+    TEST_RUN(test_cached_ipv6_fires_without_probing);
     TEST_RUN(test_cached_ipv6_requires_classified_cache);
     TEST_RUN(test_cached_ipv6_requires_loaded);
     TEST_RUN(test_cached_ipv6_requires_ipv6_facts);
+    TEST_RUN(test_cached_ipv6_does_not_override_confirmed_negative);
+    TEST_RUN(test_cached_ipv6_does_not_override_confirmed_positive);
 
     /* Ordering */
     TEST_RUN(test_ipv6_global_beats_cached_fresh);
