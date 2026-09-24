@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -68,6 +68,7 @@
  *   n == 0           -> 0
  *   variance, n == 1 -> 0        (single sample has no spread)
  *   slope,    n <  2 -> 0        (line needs two points)
+ *   median,   n == 0 -> 0        (empty has no middle)
  *   is_monotonic, n < 2 -> true  (vacuously monotone)
  *   predict_next, n == 0 -> 0
  *
@@ -85,6 +86,8 @@
  *
  * - predict_next uses round(slope) and clamps the result to [1, 65535].
  *   The clamp is a math-layer default, not a NAT-behavior claim.
+ *
+ * - median sorts a fixed-size stack copy. No allocation.
  *
  * This header depends only on <stdint.h> and <stddef.h>. It must
  * remain so.
@@ -125,12 +128,35 @@ double xury_math_mean(const uint16_t *v, size_t n);
 double xury_math_variance(const uint16_t *v, size_t n);
 
 /*
+ * Population-style median: sort the values, then take the middle
+ * element for odd n, or the average of the two middle elements for
+ * even n.
+ *
+ * Chosen over the least-squares slope for step estimation in F.3b
+ * because the median is robust to a single outlier delta (e.g. one
+ * repeated port producing a delta of 0 in an otherwise constant-step
+ * sequence), whereas the slope collapses toward zero under the same
+ * perturbation. See docs/RESEARCH_addendum_variance_decision.md for
+ * the design decision.
+ *
+ * The input array is not modified.
+ *
+ * Returns 0 when v == NULL or n == 0.
+ */
+double xury_math_median(const uint16_t *v, size_t n);
+
+/*
  * Least-squares slope of v[i] against i.
  *
  *     slope = sum((i - xbar) * (v[i] - ybar))
  *           / sum((i - xbar)^2)
  *
  * where xbar is the mean of the indices and ybar is the mean of v.
+ *
+ * This is a general-purpose primitive. It is no longer called by
+ * F.3b's classification (which uses xury_math_median instead, for
+ * outlier robustness), but it remains valid and may be used by other
+ * layers.
  *
  * Returns 0 when v == NULL or n < 2.
  */
@@ -165,6 +191,10 @@ bool xury_math_is_monotonic(const uint16_t *v, size_t n);
  *
  * The result is clamped to the valid uint16 port range [1, 65535].
  * Port 0 is not a legal destination port and is never returned.
+ *
+ * This is a general-purpose primitive. F.3b no longer uses it for
+ * classification; classify.c computes its prediction directly from
+ * the median delta, for outlier robustness.
  *
  * Returns 0 when v == NULL or n == 0.
  */
