@@ -33,7 +33,7 @@
  *   F.3c  Scoring             requires empirical calibration
  *
  * F.3b sits directly on top of F.3a. It calls the pure math helpers
- * (variance, slope) and turns their numeric output into a labeled
+ * (variance, median) and turns their numeric output into a labeled
  * pattern with a confidence level.
  *
  * ----------------------------------------------------------------------------
@@ -69,19 +69,24 @@
  *   HIGH     at least 4 * min_samples
  *
  * ----------------------------------------------------------------------------
- * The variance decision
+ * Two design decisions (see docs/RESEARCH_addendum_variance_decision.md)
  * ----------------------------------------------------------------------------
  *
- * The variance checked by this layer is the variance of consecutive
- * DELTAS (the steps between ports), not the variance of the raw port
- * values. This was decided in docs/RESEARCH_addendum_variance_decision.md.
+ * 1. Variance is DELTA variance, not value variance.
  *
- * Rationale: {5,6,7,8} and {50000,50001,50002,50003} have identical
- * step patterns and must classify the same way. Value variance made
- * classification depend on absolute port magnitude, which is unrelated
- * to predictability. Delta variance makes the check independent of
- * magnitude, and matches RESEARCH.md's original "delta ≈ constant,
- * small variance" wording.
+ *    {5,6,7,8} and {50000,50001,50002,50003} have identical step
+ *    patterns and must classify identically. Value variance made
+ *    classification depend on absolute port magnitude, which is
+ *    unrelated to predictability.
+ *
+ * 2. The step estimate is the MEDIAN of the deltas, not the
+ *    least-squares slope.
+ *
+ *    The variance gate already verifies consistency; the step
+ *    estimator only needs to report the typical step. The median is
+ *    the standard robust-statistics choice for that: a single
+ *    outlier delta (e.g. one repeated port, producing delta = 0)
+ *    collapses the least-squares slope but does not move the median.
  *
  * ----------------------------------------------------------------------------
  * Dependencies
@@ -89,8 +94,7 @@
  *
  * - src/scan/internal/math.h   (F.3a, completed)
  * - <xury/err.h>               (xury_err_t)
- * - <xury/scan.h>              (xury_scan_result_t is not used here, but
- *                               the public scan types are part of the
+ * - <xury/scan.h>              (public scan types are part of the
  *                               layer's vocabulary)
  * - <stdint.h>, <stddef.h>, <stdbool.h>
  *
@@ -136,7 +140,7 @@ typedef enum {
 
     /*
      * No consistent step. Delta variance is above threshold, or the
-     * slope is not near an integer.
+     * step estimate is not near an integer.
      */
     XURY_PATTERN_RANDOM_LIKE       = 3,
 } xury_port_pattern_t;
@@ -173,21 +177,25 @@ typedef enum {
  *   variance_threshold
  *     Maximum variance of consecutive deltas (steps) between ports
  *     for the sequence to be considered "consistent". Above this
- *     value, the pattern is RANDOM_LIKE regardless of slope.
+ *     value, the pattern is RANDOM_LIKE regardless of the step
+ *     estimate.
  *
  *     Deltas, not raw ports: this makes the check independent of
  *     absolute port magnitude. A sequence starting at 5 and a
  *     sequence starting at 50000 with the same step pattern classify
- *     identically.
+ *     identically. See docs/RESEARCH_addendum_variance_decision.md.
  *
  *     This value is an open research question (docs/RESEARCH.md §4).
  *     It must be chosen by the caller. There is no library default.
  *
  *   slope_tolerance
- *     Maximum absolute difference between the computed slope and the
- *     nearest integer for the slope to be considered "near-integer".
- *     The slope is the least-squares slope of the raw port values
- *     against the sample index.
+ *     Maximum absolute difference between the step estimate and the
+ *     nearest integer for the step to be considered "near-integer".
+ *
+ *     The step estimate is the MEDIAN of the consecutive deltas
+ *     between ports, not the least-squares slope over the raw ports.
+ *     The field name is historical; the value applies to the median
+ *     step. See docs/RESEARCH_addendum_variance_decision.md.
  *
  *     This value is an open research question (docs/RESEARCH.md §4).
  *     It must be chosen by the caller. There is no library default.
@@ -226,7 +234,8 @@ typedef struct {
     xury_confidence_t   confidence;
 
     /*
-     * The predicted next value, from xury_math_predict_next().
+     * The predicted next value, computed as
+     * last_port + round(median_step), clamped to [1, 65535].
      *
      * Meaningful only when pattern is SEQUENTIAL_LIKE or
      * FIXED_STEP_LIKE. When pattern is INSUFFICIENT_DATA or
@@ -252,7 +261,7 @@ typedef struct {
  *
  * Returns:
  *   XURY_OK          out filled
- *   XURY_ERR_INVAL   ports, cfg, or out is NULL
+ *   XURY_ERR_INVAL   cfg or out is NULL
  *
  * Behavior:
  *   - If cfg or out is NULL -> XURY_ERR_INVAL, *out untouched.
