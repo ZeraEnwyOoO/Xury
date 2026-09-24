@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -25,12 +25,25 @@
  *
  * F.3b sits directly on top of F.3a. It calls:
  *
- *     xury_math_variance()      (spread of the observed ports)
- *     xury_math_slope()         (least-squares step)
+ *     xury_math_variance()      (variance of consecutive deltas)
+ *     xury_math_slope()         (least-squares step over raw ports)
  *     xury_math_predict_next()  (next port, already clamped)
  *
  * and turns their numeric output into a labeled pattern plus a
  * confidence level.
+ *
+ * ----------------------------------------------------------------------------
+ * Variance is delta variance
+ * ----------------------------------------------------------------------------
+ *
+ * The variance gate is applied to the array of consecutive deltas
+ * between ports, not to the raw port values. See
+ * docs/RESEARCH_addendum_variance_decision.md for the decision.
+ *
+ * In short: {5,6,7,8} and {50000,50001,50002,50003} have identical
+ * step patterns and must classify identically. Value variance made
+ * classification depend on absolute port magnitude, which is
+ * unrelated to predictability.
  *
  * ----------------------------------------------------------------------------
  * No hidden thresholds
@@ -62,7 +75,6 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
-#include <xury/err.h>
 #include <math.h>
 
 #include "scan/internal/math.h"
@@ -152,11 +164,18 @@ static xury_confidence_t confidence_from_n(size_t n,
  *
  * Order of checks:
  *
- *   1. Variance must be below cfg->variance_threshold. If not, the
- *      sequence is RANDOM_LIKE regardless of slope.
+ *   1. Delta variance must be below cfg->variance_threshold. If not,
+ *      the sequence is RANDOM_LIKE regardless of slope.
  *
- *   2. Slope must be near an integer within cfg->slope_tolerance.
- *      If not, the sequence is RANDOM_LIKE.
+ *      Variance is measured over consecutive deltas, not raw ports.
+ *      This makes the check independent of absolute port magnitude:
+ *      {5,6,7,8} and {50000,50001,50002,50003} have identical step
+ *      patterns and therefore identical delta variance, so they
+ *      classify the same way.
+ *
+ *   2. Slope (least-squares, over the raw port values against the
+ *      sample index) must be near an integer within
+ *      cfg->slope_tolerance. If not, the sequence is RANDOM_LIKE.
  *
  *   3. If the nearest integer to the slope is 1, the pattern is
  *      SEQUENTIAL_LIKE.
@@ -170,21 +189,72 @@ static xury_confidence_t confidence_from_n(size_t n,
  *
  * The caller is responsible for choosing thresholds that make this
  * rule meaningful. F.3b does not second-guess them.
+ *
+ * ----------------------------------------------------------------------------
+ * Delta array
+ * ----------------------------------------------------------------------------
+ *
+ * deltas has length n - 1. The caller-supplied ports array has at
+ * least min_samples entries (checked before this function is called),
+ * and min_samples >= 2 is assumed by the caller's contract, so n >= 2
+ * here and deltas has at least one entry.
+ *
+ * A fixed-size stack buffer is used. XURY_CLASSIFY_MAX_SAMPLES bounds
+ * the input length at the call site (probing produces at most that
+ * many samples), and this function is never called with more.
  */
+
+#define XURY_CLASSIFY_MAX_SAMPLES 64u
+
 static xury_port_pattern_t classify_rule(const uint16_t *ports,
                                          size_t n,
                                          const xury_classify_cfg_t *cfg)
 {
-    double variance = xury_math_variance(ports, n);
-    if (variance > cfg->variance_threshold) {
+    /*
+     * Step 1: delta variance.
+     *
+     * Compute the deltas into a stack buffer. If n is larger than the
+     * buffer, fall back to RANDOM_LIKE without reading past the array
+     * (this should never happen given the call-site bound, but the
+     * check is cheap and avoids undefined behavior if it ever does).
+     */
+    if (n < 2u || n > XURY_CLASSIFY_MAX_SAMPLES) {
         return XURY_PATTERN_RANDOM_LIKE;
     }
 
+    uint16_t deltas[XURY_CLASSIFY_MAX_SAMPLES - 1u];
+    for (size_t i = 0; i + 1u < n; i++) {
+        /*
+         * Ports are uint16_t; a negative delta (ports decreasing)
+         * would wrap. We care about the magnitude of the step, so
+         * use a signed difference and store the absolute value.
+         *
+         * A decreasing sequence with constant negative step is still
+         * a fixed step; the slope check below distinguishes direction.
+         */
+        int32_t d = (int32_t)ports[i + 1u] - (int32_t)ports[i];
+        if (d < 0) {
+            d = -d;
+        }
+        deltas[i] = (uint16_t)d;
+    }
+
+    double delta_variance = xury_math_variance(deltas, n - 1u);
+    if (delta_variance > cfg->variance_threshold) {
+        return XURY_PATTERN_RANDOM_LIKE;
+    }
+
+    /*
+     * Step 2: slope over the raw ports, against the sample index.
+     */
     double slope = xury_math_slope(ports, n);
     if (!slope_is_near_integer(slope, cfg->slope_tolerance)) {
         return XURY_PATTERN_RANDOM_LIKE;
     }
 
+    /*
+     * Steps 3 and 4: classify by the rounded slope.
+     */
     double step = nearest_integer(slope);
     if (step == 1.0) {
         return XURY_PATTERN_SEQUENTIAL_LIKE;
