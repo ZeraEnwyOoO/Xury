@@ -32,26 +32,26 @@
  * confidence level.
  *
  * ----------------------------------------------------------------------------
- * Two design decisions
+ * Design decisions
  * ----------------------------------------------------------------------------
  *
- * Both are recorded in docs/RESEARCH_addendum_variance_decision.md.
+ * Recorded in docs/RESEARCH_addendum_variance_decision.md:
  *
  * 1. Variance is DELTA variance, not value variance.
  *
- *    {5,6,7,8} and {50000,50001,50002,50003} have identical step
- *    patterns and must classify identically. Value variance made
- *    classification depend on absolute port magnitude, which is
- *    unrelated to predictability.
+ * 2. The step magnitude estimate is the MEDIAN of the absolute
+ *    deltas, not the least-squares slope.
  *
- * 2. The step estimate is the MEDIAN of the deltas, not the
- *    least-squares slope.
+ * 3. Pattern classification (SEQUENTIAL_LIKE / FIXED_STEP_LIKE /
+ *    RANDOM_LIKE) uses the step MAGNITUDE only. Direction does not
+ *    affect the pattern: {50,49,48,47} and {47,48,49,50} are equally
+ *    predictable, so both classify as SEQUENTIAL_LIKE.
  *
- *    The variance gate already verifies consistency; the step
- *    estimator only needs to report the typical step. The median is
- *    the standard robust-statistics choice for that: a single
- *    outlier delta (e.g. one repeated port, producing delta = 0)
- *    collapses the least-squares slope but does not move the median.
+ * 4. predicted_next still needs direction. It uses a majority vote
+ *    of the signed deltas: the sign that occurs more often wins.
+ *    Zero deltas (repeats) count toward neither side. A tie
+ *    defaults to +1 (arbitrary but documented; ties only matter for
+ *    RANDOM_LIKE patterns, where predicted_next is set to 0 anyway).
  *
  * ----------------------------------------------------------------------------
  * No hidden thresholds
@@ -64,9 +64,6 @@
  * The only numeric literal in the classification path is 1.0, which
  * is not a threshold but the definition of "sequential" (step of
  * exactly one). It is not subject to calibration.
- *
- * If a future change needs another cutoff, it must be added to the
- * config struct, not hardcoded here. See docs/RESEARCH.md §5.
  *
  * ----------------------------------------------------------------------------
  * Dependencies
@@ -96,9 +93,6 @@
 
 /*
  * Return the nearest integer to v as a double.
- *
- * Wraps round() so the intent is named at the call site and so a
- * future port to a freestanding target has one place to change.
  */
 static double nearest_integer(double v)
 {
@@ -107,10 +101,6 @@ static double nearest_integer(double v)
 
 /*
  * True if a step estimate is within tolerance of the nearest integer.
- *
- * Tolerance comes from cfg. A tolerance of 0 means "exact integer
- * only"; a negative tolerance is treated as 0 by the caller path
- * that validates cfg, so this function can assume >= 0.
  *
  * The name still says "slope" for historical reasons: the threshold
  * field is cfg->slope_tolerance, and it used to be applied to a
@@ -131,33 +121,18 @@ static bool slope_is_near_integer(double step,
 /*
  * Compute the confidence level from the sample count.
  *
- * Buckets (from docs/RESEARCH.md §2 F.3b and the project decision):
+ * Buckets:
  *
  *     n <  2 * min_samples   -> LOW
  *     n <  4 * min_samples   -> MEDIUM
  *     otherwise              -> HIGH
  *
- * min_samples is guaranteed > 0 by the caller path that validates
- * cfg, so the multiplications do not overflow for any realistic
- * value of n.
+ * Uses division rather than multiplication to avoid any overflow
+ * concern for absurd min_samples values.
  */
 static xury_confidence_t confidence_from_n(size_t n,
                                            size_t min_samples)
 {
-    /*
-     * The comparison is written so that the multiplications cannot
-     * overflow even if min_samples were absurdly large: we divide
-     * n by min_samples instead of multiplying min_samples by 2 or 4.
-     *
-     * n / min_samples is integer division; the buckets are:
-     *
-     *     ratio < 2  -> LOW
-     *     ratio < 4  -> MEDIUM
-     *     otherwise  -> HIGH
-     *
-     * This is equivalent to the multiplication form for all n and
-     * min_samples > 0, and cannot overflow.
-     */
     size_t ratio = n / min_samples;
     if (ratio < 2u) {
         return XURY_CONFIDENCE_LOW;
@@ -170,24 +145,18 @@ static xury_confidence_t confidence_from_n(size_t n,
 
 /*
  * ============================================================================
- * DELTA ARRAY
+ * DELTA ARRAY (magnitude)
  * ============================================================================
  *
- * Compute the array of consecutive deltas, in magnitude form.
+ * Compute the array of consecutive deltas in magnitude form:
  *
- * deltas[i] = |ports[i+1] - ports[i]|, for i in [0, n-1).
+ *     deltas[i] = |ports[i+1] - ports[i]|
  *
- * The magnitude form is used because the variance gate and the median
- * step estimator both care about the size of the step, not its
- * direction. A decreasing sequence with a constant step still has a
- * constant step; direction is not part of the pattern vocabulary in
- * this layer.
+ * The magnitude form is used for the variance gate and the median
+ * step estimator, both of which care about the size of the step, not
+ * its direction.
  *
- * The caller supplies a stack buffer. It must have room for at least
- * n - 1 entries.
- *
- * Returns the number of deltas written (n - 1), or 0 if the inputs
- * are unusable.
+ * Returns the number of deltas written (n - 1), or 0 on bad input.
  */
 static size_t compute_deltas(const uint16_t *ports,
                              size_t n,
@@ -213,41 +182,71 @@ static size_t compute_deltas(const uint16_t *ports,
 
 /*
  * ============================================================================
+ * DELTA DIRECTION (majority vote)
+ * ============================================================================
+ *
+ * Return +1 or -1, whichever sign of the signed deltas occurs more
+ * often across the sequence.
+ *
+ * Rules (see docs/RESEARCH_addendum_variance_decision.md):
+ *
+ *   - A positive delta (ports[i+1] > ports[i]) votes +1.
+ *   - A negative delta (ports[i+1] < ports[i]) votes -1.
+ *   - A zero delta (ports[i+1] == ports[i]) votes neither. The
+ *     repeat case is a perturbation of magnitude only; it does not
+ *     carry a direction.
+ *   - A tie (pos == neg) defaults to +1. This is arbitrary but
+ *     documented. Ties in practice mean genuinely mixed direction,
+ *     which implies RANDOM_LIKE, for which predicted_next is 0 and
+ *     the direction value is therefore unused.
+ *
+ * Direction is only meaningful for SEQUENTIAL_LIKE and
+ * FIXED_STEP_LIKE patterns, where the signed deltas are expected to
+ * agree.
+ *
+ * Returns +1 or -1. Never returns 0.
+ */
+static int delta_direction(const uint16_t *ports, size_t n)
+{
+    if (ports == NULL || n < 2u) {
+        return +1;
+    }
+
+    size_t pos = 0u;
+    size_t neg = 0u;
+
+    for (size_t i = 0; i + 1u < n; i++) {
+        if (ports[i + 1u] > ports[i]) {
+            pos++;
+        } else if (ports[i + 1u] < ports[i]) {
+            neg++;
+        }
+        /* Equal: vote neither. */
+    }
+
+    if (neg > pos) {
+        return -1;
+    }
+    return +1;
+}
+
+/*
+ * ============================================================================
  * CLASSIFICATION RULE
  * ============================================================================
  *
- * Given enough samples, decide the pattern.
- *
  * Order of checks:
  *
- *   1. Delta variance must be below cfg->variance_threshold. If not,
- *      the sequence is RANDOM_LIKE regardless of the step estimate.
+ *   1. Delta variance must be below cfg->variance_threshold.
  *
- *   2. The step is estimated as the MEDIAN of the deltas. It must be
- *      near an integer within cfg->slope_tolerance. If not, the
- *      sequence is RANDOM_LIKE.
+ *   2. The step magnitude is the MEDIAN of the absolute deltas. It
+ *      must be near an integer within cfg->slope_tolerance.
  *
- *   3. If the rounded step is 1, the pattern is SEQUENTIAL_LIKE.
+ *   3. Rounded step == 1 -> SEQUENTIAL_LIKE.
  *
- *   4. Otherwise (rounded step != 1, but near-integer), the pattern
- *      is FIXED_STEP_LIKE.
+ *   4. Rounded step != 1, near-integer -> FIXED_STEP_LIKE.
  *
- * A step of 0 (constant sequence) falls through to FIXED_STEP_LIKE,
- * which is the honest answer: the step is constant, but it is not the
- * canonical +1 case.
- *
- * The caller is responsible for choosing thresholds that make this
- * rule meaningful. F.3b does not second-guess them.
- *
- * ----------------------------------------------------------------------------
- * Buffer bound
- * ----------------------------------------------------------------------------
- *
- * The delta array lives on the stack. Its size is bounded by
- * XURY_CLASSIFY_MAX_SAMPLES - 1, which is comfortably larger than
- * the probe sample cap (XURY_PROBE_PORT_SAMPLES) that the scan layer
- * enforces at the call site. If a caller ever passes more, the
- * function falls back to RANDOM_LIKE without reading past the array.
+ * Direction is not part of the pattern; see the design note above.
  */
 
 #define XURY_CLASSIFY_MAX_SAMPLES 64u
@@ -262,7 +261,8 @@ static xury_port_pattern_t classify_rule(const uint16_t *ports,
 
     uint16_t deltas[XURY_CLASSIFY_MAX_SAMPLES - 1u];
     size_t delta_count = compute_deltas(ports, n,
-                                        deltas, sizeof(deltas) / sizeof(deltas[0]));
+                                        deltas,
+                                        sizeof(deltas) / sizeof(deltas[0]));
     if (delta_count == 0u) {
         return XURY_PATTERN_RANDOM_LIKE;
     }
@@ -276,7 +276,7 @@ static xury_port_pattern_t classify_rule(const uint16_t *ports,
     }
 
     /*
-     * Step 2: median step estimate, near-integer check.
+     * Step 2: median step magnitude, near-integer check.
      */
     double step = xury_math_median(deltas, delta_count);
     if (!slope_is_near_integer(step, cfg->slope_tolerance)) {
@@ -284,7 +284,7 @@ static xury_port_pattern_t classify_rule(const uint16_t *ports,
     }
 
     /*
-     * Steps 3 and 4: classify by the rounded step.
+     * Steps 3 and 4: classify by the rounded step magnitude.
      */
     double rounded = nearest_integer(step);
     if (rounded == 1.0) {
@@ -298,10 +298,15 @@ static xury_port_pattern_t classify_rule(const uint16_t *ports,
  * PREDICTION
  * ============================================================================
  *
- * Predict the next port value from the median delta.
+ * Predict the next port value:
  *
- * The result is last_port + round(median_step), clamped to [1, 65535].
- * Port 0 is not a legal destination and is never returned.
+ *     predicted = last_port + direction * round(median_step)
+ *
+ * where direction is the majority vote of the signed deltas (+1 or
+ * -1), and median_step is the median of the absolute deltas.
+ *
+ * The result is clamped to [1, 65535]. Port 0 is not a legal
+ * destination and is never returned.
  *
  * This is intentionally NOT xury_math_predict_next(): that function
  * predicts from the least-squares slope, which is not robust to a
@@ -315,8 +320,10 @@ static uint16_t predict_from_median(const uint16_t *ports,
                                     size_t delta_count)
 {
     double step = xury_math_median(deltas, delta_count);
+    int    dir  = delta_direction(ports, n);
+
     double last = (double)ports[n - 1u];
-    double predicted = last + nearest_integer(step);
+    double predicted = last + (double)dir * nearest_integer(step);
 
     if (predicted < 1.0) {
         return 1u;
@@ -363,14 +370,10 @@ xury_err_t xury_classify_port_pattern(
     if (pattern == XURY_PATTERN_SEQUENTIAL_LIKE ||
         pattern == XURY_PATTERN_FIXED_STEP_LIKE) {
         /*
-         * Recompute the deltas once more for the prediction. The
-         * classify_rule() call above did the same work; the two are
+         * Recompute the deltas for the prediction. The two are
          * deliberately not merged because the prediction is only
          * needed on the success path, and classify_rule() is called
          * on every path.
-         *
-         * The cost is a few dozen uint16 stores on success, which is
-         * negligible next to the classification work itself.
          */
         if (n >= 2u && n <= XURY_CLASSIFY_MAX_SAMPLES) {
             uint16_t deltas[XURY_CLASSIFY_MAX_SAMPLES - 1u];
