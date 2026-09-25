@@ -135,6 +135,17 @@ typedef enum {
     XURY_NAT_PORT_RESTRICTED = 4,
     XURY_NAT_SYMMETRIC       = 5,
     XURY_NAT_CGNAT           = 6,
+
+    /*
+     * Sentinel. Always the last value. Used as an array bound
+     * (e.g. xury_smart_learning_t's per-NAT-type counters) and as
+     * an "is this a valid NAT type?" check. Never a real NAT type.
+     *
+     * If a new NAT type is added above, this must remain last, and
+     * its numeric value changes; code that depends on the exact
+     * value (nothing does today) would need to be updated.
+     */
+    XURY_NAT_COUNT           = 7,
 } xury_nat_type_t;
 
 /*
