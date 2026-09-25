@@ -75,6 +75,7 @@ LIB_SRCS := \
     analysis/analysis.c \
     smart/cache.c \
     smart/early_term.c \
+    smart/learning.c \
     $(PLATFORM_SRCS)
 
 LIB      := build/libxury.a
@@ -103,7 +104,8 @@ TEST_SRCS := \
     test/unit/analysis/test_score.c \
     test/unit/analysis/test_analysis.c \
     test/unit/smart/test_cache.c \
-    test/unit/smart/test_early_term.c
+    test/unit/smart/test_early_term.c \
+    test/unit/smart/test_learning.c
 
 TEST_BINS := $(TEST_SRCS:test/unit/%.c=build/tests/%)
 
