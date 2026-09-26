@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -205,15 +205,21 @@ xury_err_t xury_weapon_ipv6_try(const xury_weapon_attempt_ctx_t *ctx,
     }
 
     /*
-     * Bind to an ephemeral local port on the IPv6 wildcard. The
-     * platform layer treats an empty ip string as the wildcard
-     * (matching scan/probing.c's convention).
+     * Bind to an ephemeral local port on the IPv6 wildcard.
+     *
+     * The literal "::" is required: platform/posix/sock.c
+     * ep_to_sockaddr() calls inet_pton(AF_INET6, ep->ip, ...), and
+     * inet_pton() rejects an empty string. An empty ip[] would make
+     * bind() fail every time with XURY_ERR_BAD_ENDPOINT before any
+     * probe is sent.
      */
     xury_endpoint_t bind_ep;
     memset(&bind_ep, 0, sizeof(bind_ep));
     bind_ep.family = XURY_AF_INET6;
     bind_ep.port   = 0u;
-    bind_ep.ip[0]  = '\0';
+    bind_ep.ip[0]  = ':';
+    bind_ep.ip[1]  = ':';
+    bind_ep.ip[2]  = '\0';
 
     rc = xury_platform_sock_bind(s, &bind_ep);
     if (rc != XURY_OK) {
