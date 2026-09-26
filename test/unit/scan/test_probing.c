@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -33,6 +33,11 @@
  *   - Fields that must never be invented (TTL, external ports when
  *     no response arrived)
  *   - Internal consistency (sample_count and array bounds, RTT avg)
+ *   - Socket setup: that make_probe_socket() actually binds. This is
+ *     the direct regression test for the empty-string wildcard bug
+ *     (bind_ep.ip[0] = '\0') that previously made bind() fail on
+ *     every call while xury_scan_probing() silently folded the
+ *     failure into status=FAILED.
  *
  * What this file CANNOT verify (and does not pretend to):
  *
@@ -53,6 +58,7 @@
 #include <string.h>
 
 #include <xury/xury.h>
+#include "platform/platform.h"
 #include "scan/internal/probing.h"
 #include "test/test.h"
 
@@ -184,6 +190,70 @@ static void test_inval_leaves_out_untouched(void)
     /* Silence unused-variable warning for `out`; it is only here
      * for symmetry with out2 in the first call. */
     (void)out;
+}
+
+/*
+ * ============================================================================
+ * SOCKET SETUP — BIND COVERAGE
+ * ============================================================================
+ *
+ * make_probe_socket() is exposed via scan/internal/probing.h
+ * specifically so these tests can prove that bind() succeeds.
+ *
+ * Without these tests, a bind failure and a peer-no-response both
+ * collapse into out.status == XURY_SCAN_SUB_FAILED from
+ * xury_scan_probing(), making them indistinguishable. The earlier
+ * bug — bind_ep.ip being an empty string, which inet_pton() rejects
+ * — was invisible to every existing test for exactly this reason.
+ */
+
+static void test_make_probe_socket_binds_successfully(void)
+{
+    xury_sock_t s = XURY_SOCK_INVALID;
+    xury_endpoint_t local;
+    memset(&local, 0, sizeof(local));
+
+    xury_err_t rc = make_probe_socket(&s, &local);
+
+    /*
+     * rc == XURY_OK is the whole point: if bind() had failed (as it
+     * did before the "0.0.0.0" fix), make_probe_socket() would
+     * return the platform error here, not XURY_OK.
+     */
+    TEST_ASSERT_EQ(rc, XURY_OK);
+
+    /* The socket handle must be valid. */
+    TEST_ASSERT(s != XURY_SOCK_INVALID);
+
+    /* The local endpoint must reflect a real IPv4 binding. */
+    TEST_ASSERT_EQ(local.family, XURY_AF_INET);
+
+    /*
+     * A successful bind to port 0 always yields a non-zero
+     * ephemeral port. If the port is 0, either bind silently did
+     * nothing or getsockname() failed — both indicate the bind
+     * step is broken.
+     */
+    TEST_ASSERT(local.port != 0u);
+
+    (void)xury_platform_sock_close(s);
+}
+
+static void test_make_probe_socket_null_args(void)
+{
+    /*
+     * Null out_sock or out_local must be rejected as a programming
+     * error (XURY_ERR_INVAL), not crash.
+     */
+    xury_endpoint_t local;
+    memset(&local, 0, sizeof(local));
+
+    xury_err_t rc1 = make_probe_socket(NULL, &local);
+    TEST_ASSERT_EQ(rc1, XURY_ERR_INVAL);
+
+    xury_sock_t s = XURY_SOCK_INVALID;
+    xury_err_t rc2 = make_probe_socket(&s, NULL);
+    TEST_ASSERT_EQ(rc2, XURY_ERR_INVAL);
 }
 
 /*
@@ -474,6 +544,10 @@ static void run_all_tests(void)
     TEST_RUN(test_null_peers_with_nonzero_count);
     TEST_RUN(test_null_peers_with_zero_count);
     TEST_RUN(test_inval_leaves_out_untouched);
+
+    /* Socket setup — bind coverage */
+    TEST_RUN(test_make_probe_socket_binds_successfully);
+    TEST_RUN(test_make_probe_socket_null_args);
 
     /* Honest failure */
     TEST_RUN(test_returns_ok_when_peer_does_not_answer);
