@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -410,8 +410,21 @@ static xury_err_t make_probe_socket(xury_sock_t *out_sock,
     memset(&bind_ep, 0, sizeof(bind_ep));
     bind_ep.family = XURY_AF_INET;
     bind_ep.port   = 0u;
-    /* Empty ip string means INADDR_ANY for the platform layer. */
-    bind_ep.ip[0] = '\0';
+    /*
+     * IPv4 wildcard bind. The literal "0.0.0.0" is required:
+     * platform/posix/sock.c ep_to_sockaddr() calls
+     * inet_pton(AF_INET, ep->ip, ...), and inet_pton() rejects an
+     * empty string. An empty ip[] would make bind() fail every
+     * time with XURY_ERR_BAD_ENDPOINT before any probe is sent.
+     */
+    bind_ep.ip[0] = '0';
+    bind_ep.ip[1] = '.';
+    bind_ep.ip[2] = '0';
+    bind_ep.ip[3] = '.';
+    bind_ep.ip[4] = '0';
+    bind_ep.ip[5] = '.';
+    bind_ep.ip[6] = '0';
+    bind_ep.ip[7] = '\0';
 
     rc = xury_platform_sock_bind(s, &bind_ep);
     if (rc != XURY_OK) {
