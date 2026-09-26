@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -182,6 +182,38 @@ xury_err_t xury_scan_probing(const xury_endpoint_t *peer_targets,
                              size_t peer_count,
                              uint32_t timeout_ms,
                              xury_probing_result_t *out);
+
+/*
+ * ============================================================================
+ * TEST-ONLY INTERNAL
+ * ============================================================================
+ *
+ * Exposed only for test coverage of the bind step — not part of the
+ * public API surface. Do not call this from outside scan/probing.c
+ * or its test file (tests/unit/scan/test_probing.c).
+ *
+ * Creates and binds a UDP socket for probing, returning the socket
+ * handle and the chosen local endpoint. The caller owns the socket
+ * and must close it with xury_platform_sock_close().
+ *
+ * This is the exact function called internally by xury_scan_probing()
+ * before any probe is sent. Exposing it lets a unit test verify that
+ * bind() actually succeeds, independently of the ambiguous
+ * status=FAILED path that collapses "bind failed" and "peer did not
+ * answer" into the same result.
+ *
+ * Arguments:
+ *   out_sock   receives the socket handle
+ *   out_local  receives the bound local endpoint (port is non-zero
+ *              on success)
+ *
+ * Returns:
+ *   XURY_OK          socket created, bound, and local endpoint read
+ *   XURY_ERR_INVAL   out_sock or out_local is NULL
+ *   other            platform error from create/bind/local
+ */
+xury_err_t make_probe_socket(xury_sock_t *out_sock,
+                             xury_endpoint_t *out_local);
 
 /*
  * ============================================================================
