@@ -386,6 +386,12 @@ static bool endpoint_from_response(const xprb_packet_t *pkt,
 /*
  * Create and bind a UDP socket for probing.
  *
+ * Non-static: exposed via scan/internal/probing.h for unit-test
+ * coverage of the bind step. Not part of the public API surface —
+ * see the header comment. Production callers go through
+ * xury_scan_probing(), which is the only function that should
+ * normally use this.
+ *
  * Family selection: we bind a single IPv4 socket. Probing over IPv6
  * would need a second socket; the current protocol and the current
  * result struct are family-agnostic, but the transport is IPv4 for
@@ -395,9 +401,13 @@ static bool endpoint_from_response(const xprb_packet_t *pkt,
  * The socket is bound to an ephemeral local port. The chosen port is
  * reported through *out_local so the caller can fill local_ports[].
  */
-static xury_err_t make_probe_socket(xury_sock_t *out_sock,
-                                    xury_endpoint_t *out_local)
+xury_err_t make_probe_socket(xury_sock_t *out_sock,
+                             xury_endpoint_t *out_local)
 {
+    if (out_sock == NULL || out_local == NULL) {
+        return XURY_ERR_INVAL;
+    }
+
     xury_sock_t s = XURY_SOCK_INVALID;
     xury_err_t rc = xury_platform_sock_create(XURY_AF_INET,
                                               XURY_PLATFORM_SOCK_UDP,
@@ -630,6 +640,25 @@ xury_err_t xury_scan_probing(const xury_endpoint_t *peer_targets,
     xury_endpoint_t local;
     xury_err_t rc = make_probe_socket(&s, &local);
     if (rc != XURY_OK) {
+        /*
+         * KNOWN LIMITATION: a socket setup failure (create, bind,
+         * or local-endpoint read) is reported as
+         * XURY_SCAN_SUB_FAILED, the same status as "no peer
+         * answered". These are two different situations — setup
+         * failure is an environment problem, peer silence is a
+         * real-world network outcome — but the current
+         * XURY_OK + status convention collapses them.
+         *
+         * This is intentional for now: changing the convention
+         * would affect all of Phase F/G, not just probing. A
+         * dedicated status (e.g. XURY_SCAN_SUB_SETUP_FAILED) is a
+         * possible future change; see the open question raised
+         * during the Phase H audit. The bind fix that motivated
+         * this comment is verified by
+         * test_make_probe_socket_binds_successfully in
+         * tests/unit/scan/test_probing.c, not by status
+         * inspection.
+         */
         out->status = XURY_SCAN_SUB_FAILED;
         out->elapsed_ms = (uint32_t)(xury_platform_time_ms() - t0);
         return XURY_OK;
