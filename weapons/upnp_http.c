@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -63,6 +63,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <string.h>
+#include <stdio.h>
 
 #include <xury/types.h>
 #include <xury/err.h>
@@ -92,10 +93,6 @@
  * ============================================================================
  * HELPERS — STRING SCAN
  * ============================================================================
- *
- * The only string operations the HTTP client needs are: find a
- * case-insensitive substring, and find the next CRLF. Both are
- * simple, allocation-free, and do not depend on locale.
  */
 
 /*
@@ -267,16 +264,102 @@ static xury_err_t build_request(const char *method,
 
 /*
  * ============================================================================
+ * HELPERS — SEND ALL
+ * ============================================================================
+ *
+ * Send exactly len bytes on the connected socket, looping on partial
+ * writes. A short send is not an error: TCP may accept fewer bytes
+ * than the caller offered, and the contract is to keep pushing until
+ * the whole buffer is written or a real error occurs.
+ */
+static xury_err_t send_all(xury_sock_t s,
+                           const void *buf,
+                           size_t len)
+{
+    const char *p = (const char *)buf;
+    size_t sent_total = 0u;
+    while (sent_total < len) {
+        size_t sent = 0u;
+        xury_err_t rc = xury_sock_send(s, p + sent_total,
+                                       len - sent_total, &sent);
+        if (rc == XURY_ERR_PARTIAL_WRITE) {
+            /* Some bytes went out; keep pushing. */
+            sent_total += sent;
+            continue;
+        }
+        if (rc != XURY_OK) {
+            return rc;
+        }
+        if (sent == 0u) {
+            /* A successful send that wrote nothing is a platform
+             * contract violation; treat it as an I/O failure. */
+            return XURY_ERR_IO;
+        }
+        sent_total += sent;
+    }
+    return XURY_OK;
+}
+
+/*
+ * ============================================================================
+ * HELPERS — READ HEADER BLOCK
+ * ============================================================================
+ *
+ * Read bytes into hdr until "\r\n\r\n" is seen. Returns the total
+ * number of bytes in hdr (including the terminator) through
+ * *out_hdr_len.
+ *
+ * On a socket that closes cleanly before the terminator, this
+ * reports XURY_ERR_BAD_ENDPOINT — a truncated header block is not
+ * a valid response.
+ */
+static xury_err_t read_headers(xury_sock_t s,
+                               char *hdr,
+                               size_t hdr_cap,
+                               uint32_t timeout_ms,
+                               size_t *out_hdr_len)
+{
+    size_t hdr_len = 0u;
+    for (;;) {
+        if (hdr_len >= hdr_cap) {
+            return XURY_ERR_BAD_ENDPOINT;
+        }
+        size_t got = 0u;
+        xury_err_t rc = xury_sock_recv(s, hdr + hdr_len,
+                                       hdr_cap - hdr_len,
+                                       &got, timeout_ms);
+        if (rc == XURY_ERR_SOCKET_CLOSED) {
+            return XURY_ERR_BAD_ENDPOINT;
+        }
+        if (rc != XURY_OK) {
+            return rc;
+        }
+        hdr_len += got;
+
+        /* Look for "\r\n\r\n". */
+        size_t i = 0u;
+        while (i + 3u < hdr_len) {
+            if (hdr[i] == '\r' && hdr[i + 1u] == '\n' &&
+                hdr[i + 2u] == '\r' && hdr[i + 3u] == '\n') {
+                *out_hdr_len = hdr_len;
+                return XURY_OK;
+            }
+            i++;
+        }
+    }
+}
+
+/*
+ * ============================================================================
  * HELPERS — HEADER PARSING
  * ============================================================================
  */
 
 /*
  * Parse the status line and headers. On success, writes the status
- * code to *out_status, and the body offset (start of body in the
- * header buffer, or 0 if the body has not yet arrived) to
- * *out_body_off. Sets *out_chunked if the response advertises
- * Transfer-Encoding: chunked.
+ * code to *out_status, the body offset (start of body in the header
+ * buffer) to *out_body_off, and whether Transfer-Encoding: chunked
+ * was advertised to *out_chunked.
  *
  * Returns XURY_OK, or:
  *   XURY_ERR_BAD_ENDPOINT  - malformed status line
@@ -333,11 +416,7 @@ static xury_err_t parse_status_and_headers(const char *buf,
                  (buf[sp + 2u] - '0') * 10 +
                  (buf[sp + 3u] - '0');
 
-    /*
-     * Walk the header lines. We only care about Content-Length and
-     * Transfer-Encoding, and only need to know whether the header
-     * block ends with an empty line.
-     */
+    /* Walk the header lines. */
     size_t pos = line_end + 2u;
     size_t body_off = 0u;
     while (pos < hdr_end) {
@@ -387,6 +466,123 @@ static xury_err_t parse_status_and_headers(const char *buf,
 }
 
 /*
+ * Find the value of a header by name in the header block. Writes a
+ * pointer and length to *out_val; returns true if found. The value
+ * is not NUL-terminated and does not include the leading colon or
+ * the trailing CRLF.
+ */
+static bool find_header_value(const char *hdr,
+                              size_t hdr_end,
+                              const char *name,
+                              const char **out_val,
+                              size_t *out_val_len)
+{
+    size_t sl = find_crlf(hdr, hdr_end, 0u);
+    if (sl == (size_t)-1) {
+        return false;
+    }
+    size_t name_len = strlen(name);
+    size_t pos = sl + 2u;
+    while (pos < hdr_end) {
+        size_t he = find_crlf(hdr, hdr_end, pos);
+        if (he == (size_t)-1) {
+            return false;
+        }
+        if (he == pos) {
+            return false;  /* end of headers */
+        }
+        size_t line_len = he - pos;
+        if (line_len >= name_len + 1u &&
+            find_ci(hdr + pos, name_len, name) == 0u &&
+            hdr[pos + name_len] == ':') {
+            size_t vstart = name_len + 1u;
+            while (vstart < line_len &&
+                   (hdr[pos + vstart] == ' ' ||
+                    hdr[pos + vstart] == '\t')) {
+                vstart++;
+            }
+            *out_val = hdr + pos + vstart;
+            *out_val_len = line_len - vstart;
+            return true;
+        }
+        pos = he + 2u;
+    }
+    return false;
+}
+
+/*
+ * Read the body of a response. content_length is the declared size.
+ * The header block may already contain some body bytes; those are
+ * copied first. Then the remaining bytes are read.
+ *
+ * Truncation (caller buffer too small) sets *out_truncated and stops
+ * reading early, leaving the socket to be closed by the caller.
+ */
+static xury_err_t read_body(xury_sock_t s,
+                            const char *hdr,
+                            size_t hdr_len,
+                            size_t body_off,
+                            size_t content_length,
+                            uint32_t timeout_ms,
+                            void *body_buf,
+                            size_t body_cap,
+                            size_t *out_body_len,
+                            bool *out_truncated)
+{
+    *out_body_len = 0u;
+    *out_truncated = false;
+
+    /* Bytes of body already buffered after the headers. */
+    size_t already = 0u;
+    if (hdr_len > body_off) {
+        already = hdr_len - body_off;
+    }
+    if (already > content_length) {
+        already = content_length;
+    }
+
+    if (already > 0u) {
+        size_t copy = already;
+        if (copy > body_cap) {
+            copy = body_cap;
+        }
+        if (copy > 0u) {
+            memcpy(body_buf, hdr + body_off, copy);
+        }
+        *out_body_len = copy;
+        if (already > body_cap) {
+            *out_truncated = true;
+        }
+    }
+
+    while (*out_body_len < content_length && *out_body_len < body_cap) {
+        size_t want = content_length - *out_body_len;
+        if (want > body_cap - *out_body_len) {
+            want = body_cap - *out_body_len;
+        }
+        if (want > HTTP_READ_CHUNK) {
+            want = HTTP_READ_CHUNK;
+        }
+        size_t got = 0u;
+        xury_err_t rc = xury_sock_recv(s,
+                                       (char *)body_buf + *out_body_len,
+                                       want, &got, timeout_ms);
+        if (rc == XURY_ERR_SOCKET_CLOSED) {
+            return XURY_ERR_BAD_ENDPOINT;
+        }
+        if (rc != XURY_OK) {
+            return rc;
+        }
+        *out_body_len += got;
+    }
+
+    if (*out_body_len < content_length) {
+        *out_truncated = true;
+    }
+    return XURY_OK;
+}
+
+/*
  * ============================================================================
  * PUBLIC — GET
  * ============================================================================
@@ -420,177 +616,55 @@ xury_err_t xury_upnp_http_get(xury_sock_t s,
         return rc;
     }
 
-    /* Send the full request. xury_sock_send reports partial writes
-     * as XURY_ERR_PARTIAL_WRITE; we loop to push the whole buffer. */
-    size_t sent_total = 0u;
-    while (sent_total < req_len) {
-        size_t sent = 0u;
-        rc = xury_sock_send(s, req + sent_total, req_len - sent_total,
-                            &sent);
-        if (rc != XURY_OK) {
-            return rc;
-        }
-        if (sent == 0u) {
-            return XURY_ERR_IO;
-        }
-        sent_total += sent;
+    rc = send_all(s, req, req_len);
+    if (rc != XURY_OK) {
+        return rc;
     }
 
-    /*
-     * Read the response. We read into a local header buffer until
-     * "\r\n\r\n" is seen, then parse the headers, then read exactly
-     * Content-Length bytes of body into the caller's buffer.
-     */
     char hdr[HTTP_HDR_CAP];
     size_t hdr_len = 0u;
-    size_t hdr_end = (size_t)-1;
-
-    for (;;) {
-        if (hdr_len >= sizeof(hdr)) {
-            return XURY_ERR_BAD_ENDPOINT;
-        }
-        size_t got = 0u;
-        rc = xury_sock_recv(s, hdr + hdr_len, sizeof(hdr) - hdr_len,
-                            &got, timeout_ms);
-        if (rc != XURY_OK) {
-            return rc;
-        }
-        hdr_len += got;
-
-        /* Look for the header terminator. */
-        size_t i = 0u;
-        while (i + 3u < hdr_len) {
-            if (hdr[i] == '\r' && hdr[i + 1u] == '\n' &&
-                hdr[i + 2u] == '\r' && hdr[i + 3u] == '\n') {
-                hdr_end = i + 4u;
-                break;
-            }
-            i++;
-        }
-        if (hdr_end != (size_t)-1) {
-            break;
-        }
+    rc = read_headers(s, hdr, sizeof(hdr), timeout_ms, &hdr_len);
+    if (rc != XURY_OK) {
+        return rc;
     }
 
     int status = 0;
     size_t body_off = 0u;
     bool chunked = false;
-    rc = parse_status_and_headers(hdr, hdr_len, hdr_end,
+    rc = parse_status_and_headers(hdr, hdr_len, hdr_len,
                                   &status, &body_off, &chunked);
     if (rc != XURY_OK) {
         return rc;
     }
-    (void)chunked;  /* rejected earlier if present */
+    (void)chunked;
 
-    /*
-     * Determine Content-Length. Re-scan the header block: we only
-     * need the first occurrence of a "content-length:" line.
-     */
-    size_t content_length = 0u;
-    bool have_length = false;
-    {
-        size_t pos = 0u;
-        /* Skip the status line. */
-        size_t sl = find_crlf(hdr, hdr_end, 0u);
-        if (sl == (size_t)-1) {
-            return XURY_ERR_BAD_ENDPOINT;
-        }
-        pos = sl + 2u;
-        while (pos < hdr_end) {
-            size_t he = find_crlf(hdr, hdr_end, pos);
-            if (he == (size_t)-1) {
-                break;
-            }
-            if (he == pos) {
-                break;
-            }
-            size_t line_len = he - pos;
-            if (find_ci(hdr + pos, line_len, "content-length") == 0u) {
-                size_t colon = 0u;
-                for (size_t k = 0u; k < line_len; k++) {
-                    if (hdr[pos + k] == ':') {
-                        colon = k;
-                        break;
-                    }
-                }
-                if (colon > 0u) {
-                    size_t vstart = colon + 1u;
-                    while (vstart < line_len &&
-                           (hdr[pos + vstart] == ' ' ||
-                            hdr[pos + vstart] == '\t')) {
-                        vstart++;
-                    }
-                    size_t vlen = line_len - vstart;
-                    size_t parsed = 0u;
-                    if (parse_dec(hdr + pos + vstart, vlen,
-                                  &parsed) == XURY_OK) {
-                        content_length = parsed;
-                        have_length = true;
-                    }
-                    break;
-                }
-            }
-            pos = he + 2u;
-        }
-    }
+    /* Find Content-Length. */
+    const char *cl_val = NULL;
+    size_t cl_len = 0u;
+    bool have_length = find_header_value(hdr, hdr_len, "content-length",
+                                         &cl_val, &cl_len);
 
-    /*
-     * Some responses (notably 204 and 304) legitimately have no
-     * body. For all others we require a Content-Length. Missing
-     * length on a 200/500 is a protocol violation we do not guess
-     * around.
-     */
     if (!have_length) {
+        /* 204/304 legitimately have no body. Anything else without a
+         * Content-Length is a protocol violation we do not guess at. */
         if (status == 204 || status == 304) {
             out->status_code = status;
-            out->body_len = 0;
-            out->body_truncated = false;
             return XURY_OK;
         }
         return XURY_ERR_BAD_ENDPOINT;
     }
 
-    /* Bytes of body already read past the header block. */
-    size_t already = hdr_len - body_off;
-    if (already > content_length) {
-        already = content_length;
-    }
-    if (already > 0u) {
-        size_t copy = already;
-        if (copy > body_cap) {
-            copy = body_cap;
-        }
-        if (copy > 0u) {
-            memcpy(body_buf, hdr + body_off, copy);
-        }
-        out->body_len = copy;
-        if (already > body_cap) {
-            out->body_truncated = true;
-        }
+    size_t content_length = 0u;
+    rc = parse_dec(cl_val, cl_len, &content_length);
+    if (rc != XURY_OK) {
+        return XURY_ERR_BAD_ENDPOINT;
     }
 
-    /* Read the remainder, stopping at Content-Length or at the
-     * caller's buffer size (in which case we mark truncation and
-     * stop reading). */
-    while (out->body_len < content_length && out->body_len < body_cap) {
-        size_t want = content_length - out->body_len;
-        if (want > body_cap - out->body_len) {
-            want = body_cap - out->body_len;
-        }
-        if (want > HTTP_READ_CHUNK) {
-            want = HTTP_READ_CHUNK;
-        }
-        size_t got = 0u;
-        rc = xury_sock_recv(s, (char *)body_buf + out->body_len, want,
-                            &got, timeout_ms);
-        if (rc != XURY_OK) {
-            return rc;
-        }
-        out->body_len += got;
-    }
-
-    if (out->body_len < content_length) {
-        out->body_truncated = true;
+    rc = read_body(s, hdr, hdr_len, body_off, content_length,
+                   timeout_ms, body_buf, body_cap,
+                   &out->body_len, &out->body_truncated);
+    if (rc != XURY_OK) {
+        return rc;
     }
 
     out->status_code = status;
@@ -640,122 +714,38 @@ xury_err_t xury_upnp_http_post(xury_sock_t s,
         return rc;
     }
 
-    /* Send headers, then body. */
-    size_t sent_total = 0u;
-    while (sent_total < req_len) {
-        size_t sent = 0u;
-        rc = xury_sock_send(s, req + sent_total, req_len - sent_total,
-                            &sent);
-        if (rc != XURY_OK) {
-            return rc;
-        }
-        if (sent == 0u) {
-            return XURY_ERR_IO;
-        }
-        sent_total += sent;
+    rc = send_all(s, req, req_len);
+    if (rc != XURY_OK) {
+        return rc;
     }
-    sent_total = 0u;
-    while (sent_total < body_len) {
-        size_t sent = 0u;
-        rc = xury_sock_send(s, (const char *)body + sent_total,
-                            body_len - sent_total, &sent);
+    if (body_len > 0u) {
+        rc = send_all(s, body, body_len);
         if (rc != XURY_OK) {
             return rc;
         }
-        if (sent == 0u) {
-            return XURY_ERR_IO;
-        }
-        sent_total += sent;
     }
 
-    /*
-     * Read the response. Same shape as GET: accumulate headers,
-     * parse, then read Content-Length body bytes.
-     */
     char hdr[HTTP_HDR_CAP];
     size_t hdr_len = 0u;
-    size_t hdr_end = (size_t)-1;
-    for (;;) {
-        if (hdr_len >= sizeof(hdr)) {
-            return XURY_ERR_BAD_ENDPOINT;
-        }
-        size_t got = 0u;
-        rc = xury_sock_recv(s, hdr + hdr_len, sizeof(hdr) - hdr_len,
-                            &got, timeout_ms);
-        if (rc != XURY_OK) {
-            return rc;
-        }
-        hdr_len += got;
-
-        size_t i = 0u;
-        while (i + 3u < hdr_len) {
-            if (hdr[i] == '\r' && hdr[i + 1u] == '\n' &&
-                hdr[i + 2u] == '\r' && hdr[i + 3u] == '\n') {
-                hdr_end = i + 4u;
-                break;
-            }
-            i++;
-        }
-        if (hdr_end != (size_t)-1) {
-            break;
-        }
+    rc = read_headers(s, hdr, sizeof(hdr), timeout_ms, &hdr_len);
+    if (rc != XURY_OK) {
+        return rc;
     }
 
     int status = 0;
     size_t body_off = 0u;
     bool chunked = false;
-    rc = parse_status_and_headers(hdr, hdr_len, hdr_end,
+    rc = parse_status_and_headers(hdr, hdr_len, hdr_len,
                                   &status, &body_off, &chunked);
     if (rc != XURY_OK) {
         return rc;
     }
     (void)chunked;
 
-    size_t content_length = 0u;
-    bool have_length = false;
-    {
-        size_t sl = find_crlf(hdr, hdr_end, 0u);
-        if (sl == (size_t)-1) {
-            return XURY_ERR_BAD_ENDPOINT;
-        }
-        size_t pos = sl + 2u;
-        while (pos < hdr_end) {
-            size_t he = find_crlf(hdr, hdr_end, pos);
-            if (he == (size_t)-1) {
-                break;
-            }
-            if (he == pos) {
-                break;
-            }
-            size_t line_len = he - pos;
-            if (find_ci(hdr + pos, line_len, "content-length") == 0u) {
-                size_t colon = 0u;
-                for (size_t k = 0u; k < line_len; k++) {
-                    if (hdr[pos + k] == ':') {
-                        colon = k;
-                        break;
-                    }
-                }
-                if (colon > 0u) {
-                    size_t vstart = colon + 1u;
-                    while (vstart < line_len &&
-                           (hdr[pos + vstart] == ' ' ||
-                            hdr[pos + vstart] == '\t')) {
-                        vstart++;
-                    }
-                    size_t vlen = line_len - vstart;
-                    size_t parsed = 0u;
-                    if (parse_dec(hdr + pos + vstart, vlen,
-                                  &parsed) == XURY_OK) {
-                        content_length = parsed;
-                        have_length = true;
-                    }
-                    break;
-                }
-            }
-            pos = he + 2u;
-        }
-    }
+    const char *cl_val = NULL;
+    size_t cl_len = 0u;
+    bool have_length = find_header_value(hdr, hdr_len, "content-length",
+                                         &cl_val, &cl_len);
 
     if (!have_length) {
         if (status == 204 || status == 304) {
@@ -765,45 +755,17 @@ xury_err_t xury_upnp_http_post(xury_sock_t s,
         return XURY_ERR_BAD_ENDPOINT;
     }
 
-    size_t already = hdr_len - body_off;
-    if (already > content_length) {
-        already = content_length;
-    }
-    if (already > 0u) {
-        size_t copy = already;
-        if (copy > resp_body_cap) {
-            copy = resp_body_cap;
-        }
-        if (copy > 0u) {
-            memcpy(resp_body_buf, hdr + body_off, copy);
-        }
-        out->body_len = copy;
-        if (already > resp_body_cap) {
-            out->body_truncated = true;
-        }
+    size_t content_length = 0u;
+    rc = parse_dec(cl_val, cl_len, &content_length);
+    if (rc != XURY_OK) {
+        return XURY_ERR_BAD_ENDPOINT;
     }
 
-    while (out->body_len < content_length &&
-           out->body_len < resp_body_cap) {
-        size_t want = content_length - out->body_len;
-        if (want > resp_body_cap - out->body_len) {
-            want = resp_body_cap - out->body_len;
-        }
-        if (want > HTTP_READ_CHUNK) {
-            want = HTTP_READ_CHUNK;
-        }
-        size_t got = 0u;
-        rc = xury_sock_recv(s,
-                            (char *)resp_body_buf + out->body_len,
-                            want, &got, timeout_ms);
-        if (rc != XURY_OK) {
-            return rc;
-        }
-        out->body_len += got;
-    }
-
-    if (out->body_len < content_length) {
-        out->body_truncated = true;
+    rc = read_body(s, hdr, hdr_len, body_off, content_length,
+                   timeout_ms, resp_body_buf, resp_body_cap,
+                   &out->body_len, &out->body_truncated);
+    if (rc != XURY_OK) {
+        return rc;
     }
 
     out->status_code = status;
