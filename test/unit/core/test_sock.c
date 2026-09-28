@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -28,6 +28,8 @@
  *   - Until Phase D is linked, forwarded calls return
  *     XURY_ERR_NOT_IMPLEMENTED — no fake sockets, ever.
  *   - Partial writes are surfaced as XURY_ERR_PARTIAL_WRITE.
+ *   - TCP stream send/recv are the same dispatch shape as the
+ *     datagram path: same validation, same honest-failure contract.
  *
  * The tests do not assume Phase D is present. They check that the
  * behavior is one of the two honest states:
@@ -68,6 +70,7 @@ static bool rc_is_honest(xury_err_t rc)
            rc == XURY_ERR_WOULD_BLOCK ||
            rc == XURY_ERR_PARTIAL_WRITE ||
            rc == XURY_ERR_NOT_CONNECTED ||
+           rc == XURY_ERR_SOCKET_CLOSED ||
            rc == XURY_ERR_BAD_FAMILY;
 }
 
@@ -390,6 +393,139 @@ static void test_recvfrom_zeroes_outputs(void)
 
 /*
  * ============================================================================
+ * SEND (STREAM / TCP) — VALIDATION
+ * ============================================================================
+ */
+
+static void test_send_invalid_handle(void)
+{
+    uint8_t buf[4] = {0};
+    size_t sent = 123;
+    TEST_ASSERT_EQ(xury_sock_send(XURY_SOCK_INVALID, buf, 4, &sent),
+                   XURY_ERR_INVAL);
+    TEST_ASSERT_EQ(sent, 0u);
+}
+
+static void test_send_null_buf_with_len(void)
+{
+    size_t sent = 123;
+    TEST_ASSERT_EQ(xury_sock_send(0, NULL, 4, &sent),
+                   XURY_ERR_INVAL);
+    TEST_ASSERT_EQ(sent, 0u);
+}
+
+static void test_send_null_out_sent(void)
+{
+    uint8_t buf[4] = {0};
+    xury_err_t rc = xury_sock_send(0, buf, 4, NULL);
+    /*
+     * out_sent is optional; the call must still go through validation
+     * and reach the platform. With s == 0 (which is not
+     * XURY_SOCK_INVALID) and the platform present, the result is
+     * whatever the platform reports. Without the platform it is
+     * NOT_IMPLEMENTED. Either way, the call must not crash.
+     */
+    TEST_ASSERT(rc_is_honest(rc));
+}
+
+static void test_send_honest(void)
+{
+    /*
+     * If the platform is present, creating a TCP socket and calling
+     * send() before connect() must be an honest error, not a crash.
+     * If the platform is absent, the dispatch layer returns
+     * NOT_IMPLEMENTED. Both outcomes are accepted.
+     */
+    xury_sock_t s = XURY_SOCK_INVALID;
+    xury_err_t rc = xury_sock_create(XURY_AF_INET, XURY_SOCK_TCP, &s);
+    if (rc != XURY_OK) {
+        return;
+    }
+
+    uint8_t buf[4] = {0};
+    size_t sent = 123;
+    rc = xury_sock_send(s, buf, sizeof(buf), &sent);
+    TEST_ASSERT(rc == XURY_ERR_NOT_CONNECTED ||
+                rc == XURY_ERR_WOULD_BLOCK ||
+                rc == XURY_ERR_SOCKET_CLOSED ||
+                rc == XURY_ERR_IO);
+    TEST_ASSERT_EQ(sent, 0u);
+
+    (void)xury_sock_close(s);
+}
+
+/*
+ * ============================================================================
+ * RECV (STREAM / TCP) — VALIDATION
+ * ============================================================================
+ */
+
+static void test_recv_invalid_handle(void)
+{
+    uint8_t buf[8] = {0};
+    size_t n = 123;
+    TEST_ASSERT_EQ(xury_sock_recv(XURY_SOCK_INVALID,
+                                  buf, sizeof(buf), &n, 0),
+                   XURY_ERR_INVAL);
+    TEST_ASSERT_EQ(n, 0u);
+}
+
+static void test_recv_null_out_len(void)
+{
+    uint8_t buf[8] = {0};
+    TEST_ASSERT_EQ(xury_sock_recv(0, buf, sizeof(buf), NULL, 0),
+                   XURY_ERR_INVAL);
+}
+
+static void test_recv_null_buf_with_cap(void)
+{
+    size_t n = 123;
+    TEST_ASSERT_EQ(xury_sock_recv(0, NULL, 8, &n, 0),
+                   XURY_ERR_INVAL);
+    TEST_ASSERT_EQ(n, 0u);
+}
+
+static void test_recv_zeroes_out_len(void)
+{
+    /*
+     * On validation failure, *out_len must be zeroed before any
+     * forwarding, so a caller that sees 0 knows the call did not
+     * reach the platform.
+     */
+    uint8_t buf[8] = {0};
+    size_t n = 123;
+    (void)xury_sock_recv(XURY_SOCK_INVALID, buf, sizeof(buf), &n, 0);
+    TEST_ASSERT_EQ(n, 0u);
+}
+
+static void test_recv_honest(void)
+{
+    /*
+     * If the platform is present, creating a TCP socket and calling
+     * recv() before connect() must be an honest error, not a crash.
+     * If the platform is absent, the dispatch layer returns
+     * NOT_IMPLEMENTED. Both outcomes are accepted.
+     */
+    xury_sock_t s = XURY_SOCK_INVALID;
+    xury_err_t rc = xury_sock_create(XURY_AF_INET, XURY_SOCK_TCP, &s);
+    if (rc != XURY_OK) {
+        return;
+    }
+
+    uint8_t buf[8] = {0};
+    size_t n = 123;
+    rc = xury_sock_recv(s, buf, sizeof(buf), &n, 0);
+    TEST_ASSERT(rc == XURY_ERR_NOT_CONNECTED ||
+                rc == XURY_ERR_WOULD_BLOCK ||
+                rc == XURY_ERR_SOCKET_CLOSED ||
+                rc == XURY_ERR_IO);
+    TEST_ASSERT_EQ(n, 0u);
+
+    (void)xury_sock_close(s);
+}
+
+/*
+ * ============================================================================
  * CONNECT / WAIT — VALIDATION
  * ============================================================================
  */
@@ -486,6 +622,17 @@ static void run_all_tests(void)
     TEST_RUN(test_recvfrom_invalid_handle);
     TEST_RUN(test_recvfrom_null_out_len);
     TEST_RUN(test_recvfrom_zeroes_outputs);
+
+    TEST_RUN(test_send_invalid_handle);
+    TEST_RUN(test_send_null_buf_with_len);
+    TEST_RUN(test_send_null_out_sent);
+    TEST_RUN(test_send_honest);
+
+    TEST_RUN(test_recv_invalid_handle);
+    TEST_RUN(test_recv_null_out_len);
+    TEST_RUN(test_recv_null_buf_with_cap);
+    TEST_RUN(test_recv_zeroes_out_len);
+    TEST_RUN(test_recv_honest);
 
     TEST_RUN(test_connect_invalid);
     TEST_RUN(test_connect_bad_family);
