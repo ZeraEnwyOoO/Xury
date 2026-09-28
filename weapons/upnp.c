@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -905,4 +905,24 @@ xury_err_t xury_weapon_upnp_try(const xury_weapon_attempt_ctx_t *ctx,
         /* Confirm the body does not contain a fault, just in case a
          * gateway returns 200 with a fault body (non-standard but
          * observed in the wild). */
-        if (!xury_upnp_xml_present(soap_resp, post_resp.body_len
+        if (!xury_upnp_xml_present(soap_resp, post_resp.body_len,
+                                   "UPnPError")) {
+            success = true;
+        }
+    }
+
+    out->success = success;
+    if (success) {
+        /* The weapon cleared a path to the caller's peer; it did
+         * not discover a new endpoint. See weapons/internal/upnp.h. */
+        out->established_peer = ctx->peer;
+    }
+    out->elapsed_ms = (uint32_t)(xury_platform_time_ms() - t0);
+    return XURY_OK;
+}
+
+/*
+ * ============================================================================
+ * END OF FILE
+ * ============================================================================
+ */
