@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -227,8 +227,48 @@ static xury_err_t parse_start_tag(const char *buf, size_t len,
     }
     size_t name_len = p - name_start;
 
-    /* Skip attributes and whitespace up to '>' or "/>". */
-    while (p < len && buf[p] != '>' && buf[p] != '/') {
+    /*
+     * Skip attributes and whitespace up to '>' or "/>".
+     *
+     * An attribute value may contain '/' or '>' inside quotes; we
+     * must not treat those as tag terminators. The scan therefore
+     * tracks whether we are inside a single- or double-quoted
+     * attribute value.
+     *
+     * Example: <UPnPError xmlns="urn:schemas-upnp-org:control-1-0">
+     * The '/' inside the quoted value must not terminate the tag.
+     */
+    bool in_squote = false;
+    bool in_dquote = false;
+    while (p < len) {
+        char c = buf[p];
+        if (in_squote) {
+            if (c == '\'') {
+                in_squote = false;
+            }
+            p++;
+            continue;
+        }
+        if (in_dquote) {
+            if (c == '"') {
+                in_dquote = false;
+            }
+            p++;
+            continue;
+        }
+        if (c == '\'') {
+            in_squote = true;
+            p++;
+            continue;
+        }
+        if (c == '"') {
+            in_dquote = true;
+            p++;
+            continue;
+        }
+        if (c == '>' || c == '/') {
+            break;
+        }
         p++;
     }
     if (p >= len) {
