@@ -288,6 +288,96 @@ xury_err_t xury_sock_recvfrom(xury_sock_t s,
 
 /*
  * ============================================================================
+ * STREAM SEND / RECV (TCP)
+ * ============================================================================
+ *
+ * TCP is a byte stream, not a datagram protocol. For a connected
+ * stream socket, the destination is implicit (set by connect()) and
+ * the source is implicit on receive. These two functions are the
+ * stream equivalents of sendto() and recvfrom().
+ *
+ * They are used by any layer that needs to speak a stream protocol
+ * over TCP — HTTP is the first consumer, but the API is generic and
+ * does not know about HTTP, UPnP, or any specific protocol.
+ *
+ * Same return-code conventions as the datagram path:
+ *   - Programming errors -> XURY_ERR_INVAL / XURY_ERR_BAD_FAMILY
+ *   - "Nothing happened" is NOT an error (WOULD_BLOCK, TIMEOUT)
+ *   - Partial writes are reported as XURY_ERR_PARTIAL_WRITE
+ *
+ * A stream socket must already be connected via xury_sock_connect()
+ * before calling these. Calling them on an unconnected socket is a
+ * programming error and will surface as XURY_ERR_NOT_CONNECTED (or
+ * XURY_ERR_IO) from the platform layer.
+ */
+
+/*
+ * Send bytes on a connected stream socket.
+ *
+ * buf must not be NULL when len > 0.
+ * out_sent receives the number of bytes actually written. It is
+ * zeroed before any forwarding, so a caller that sees 0 knows the
+ * call did not reach the platform.
+ *
+ * A short write (out_sent < len) is reported as
+ * XURY_ERR_PARTIAL_WRITE, not as success. The caller decides whether
+ * to retry the remainder.
+ *
+ * Returns:
+ *   XURY_OK                  - all len bytes were written
+ *   XURY_ERR_INVAL           - s is XURY_SOCK_INVALID, or buf is
+ *                              NULL with len > 0
+ *   XURY_ERR_NOT_IMPLEMENTED - platform layer not linked
+ *   XURY_ERR_NOT_CONNECTED   - socket is not connected
+ *   XURY_ERR_WOULD_BLOCK     - non-blocking and the send buffer is
+ *                              full
+ *   XURY_ERR_PARTIAL_WRITE   - fewer than len bytes were written
+ *   XURY_ERR_SOCKET_CLOSED   - the peer closed the connection
+ *   XURY_ERR_IO              - platform error
+ */
+xury_err_t xury_sock_send(xury_sock_t s,
+                          const void *buf,
+                          size_t len,
+                          size_t *out_sent);
+
+/*
+ * Receive bytes on a connected stream socket.
+ *
+ * Waits up to timeout_ms for readability, then reads up to buf_cap
+ * bytes into buf. As with any stream read, the caller cannot assume
+ * the returned *out_len equals the amount the peer "sent" in one
+ * call — TCP may split or coalesce. Higher layers (HTTP framing)
+ * handle that.
+ *
+ * timeout_ms semantics match xury_sock_recvfrom():
+ *   0            -> return immediately (non-blocking poll)
+ *   UINT32_MAX   -> wait forever
+ *   otherwise    -> wait at most timeout_ms
+ *
+ * Returns:
+ *   XURY_OK                  - at least 1 byte was read; *out_len > 0
+ *   XURY_ERR_INVAL           - s is XURY_SOCK_INVALID, buf is NULL
+ *                              with buf_cap > 0, or out_len is NULL
+ *   XURY_ERR_NOT_IMPLEMENTED - platform layer not linked
+ *   XURY_ERR_TIMEOUT         - no bytes within timeout_ms
+ *   XURY_ERR_WOULD_BLOCK     - timeout_ms == 0 and nothing ready
+ *   XURY_ERR_SOCKET_CLOSED   - the peer closed the connection
+ *   XURY_ERR_IO              - platform error
+ *
+ * A clean end-of-stream (recv() returned 0) is reported as
+ * XURY_ERR_SOCKET_CLOSED, not as XURY_OK with *out_len == 0. This
+ * keeps the "XURY_OK means progress was made" invariant, matching
+ * the way UDP recvfrom treats "a datagram arrived" as the success
+ * signal.
+ */
+xury_err_t xury_sock_recv(xury_sock_t s,
+                          void *buf,
+                          size_t buf_cap,
+                          size_t *out_len,
+                          uint32_t timeout_ms);
+
+/*
+ * ============================================================================
  * TCP HELPERS
  * ============================================================================
  *
