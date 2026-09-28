@@ -140,6 +140,17 @@ XURY_WEAK xury_err_t xury_platform_sock_recvfrom(xury_sock_t s,
                                                  size_t *out_len,
                                                  uint32_t timeout_ms);
 
+XURY_WEAK xury_err_t xury_platform_sock_send(xury_sock_t s,
+                                             const void *buf,
+                                             size_t len,
+                                             size_t *out_sent);
+
+XURY_WEAK xury_err_t xury_platform_sock_recv(xury_sock_t s,
+                                             void *buf,
+                                             size_t buf_cap,
+                                             size_t *out_len,
+                                             uint32_t timeout_ms);
+
 XURY_WEAK xury_err_t xury_platform_sock_connect(xury_sock_t s,
                                                 const xury_endpoint_t *to);
 XURY_WEAK xury_err_t xury_platform_sock_wait_writable(xury_sock_t s,
@@ -166,6 +177,8 @@ XURY_WEAK xury_err_t xury_platform_sock_wait_readable(xury_sock_t s,
 #define HAVE_PLATFORM_SOCK_IFACE      (xury_platform_sock_set_interface != NULL)
 #define HAVE_PLATFORM_SOCK_SENDTO     (xury_platform_sock_sendto     != NULL)
 #define HAVE_PLATFORM_SOCK_RECVFROM   (xury_platform_sock_recvfrom   != NULL)
+#define HAVE_PLATFORM_SOCK_SEND       (xury_platform_sock_send       != NULL)
+#define HAVE_PLATFORM_SOCK_RECV       (xury_platform_sock_recv       != NULL)
 #define HAVE_PLATFORM_SOCK_CONNECT    (xury_platform_sock_connect    != NULL)
 #define HAVE_PLATFORM_SOCK_WAIT_W     (xury_platform_sock_wait_writable != NULL)
 #define HAVE_PLATFORM_SOCK_WAIT_R     (xury_platform_sock_wait_readable != NULL)
@@ -182,6 +195,8 @@ XURY_WEAK xury_err_t xury_platform_sock_wait_readable(xury_sock_t s,
 #define HAVE_PLATFORM_SOCK_IFACE      1
 #define HAVE_PLATFORM_SOCK_SENDTO     1
 #define HAVE_PLATFORM_SOCK_RECVFROM   1
+#define HAVE_PLATFORM_SOCK_SEND       1
+#define HAVE_PLATFORM_SOCK_RECV       1
 #define HAVE_PLATFORM_SOCK_CONNECT    1
 #define HAVE_PLATFORM_SOCK_WAIT_W     1
 #define HAVE_PLATFORM_SOCK_WAIT_R     1
@@ -359,7 +374,7 @@ xury_err_t xury_sock_set_interface(xury_sock_t s, const char *ifname)
 
 /*
  * ============================================================================
- * PUBLIC — SEND
+ * PUBLIC — SEND (DATAGRAM)
  * ============================================================================
  */
 
@@ -410,7 +425,7 @@ xury_err_t xury_sock_sendto(xury_sock_t s,
 
 /*
  * ============================================================================
- * PUBLIC — RECV
+ * PUBLIC — RECV (DATAGRAM)
  * ============================================================================
  */
 
@@ -451,6 +466,95 @@ xury_err_t xury_sock_recvfrom(xury_sock_t s,
                                                 out_from,
                                                 &n,
                                                 timeout_ms);
+    if (rc != XURY_OK) {
+        return rc;
+    }
+    *out_len = n;
+    return XURY_OK;
+}
+
+/*
+ * ============================================================================
+ * PUBLIC — SEND (STREAM / TCP)
+ * ============================================================================
+ */
+
+xury_err_t xury_sock_send(xury_sock_t s,
+                          const void *buf,
+                          size_t len,
+                          size_t *out_sent)
+{
+    if (out_sent != NULL) {
+        *out_sent = 0u;
+    }
+
+    if (s == XURY_SOCK_INVALID) {
+        return XURY_ERR_INVAL;
+    }
+    if (buf == NULL && len > 0u) {
+        return XURY_ERR_INVAL;
+    }
+
+#if defined(__GNUC__) || defined(__clang__)
+    if (!HAVE_PLATFORM_SOCK_SEND) {
+        return XURY_ERR_NOT_IMPLEMENTED;
+    }
+#endif
+
+    size_t sent = 0u;
+    xury_err_t rc = xury_platform_sock_send(s, buf, len, &sent);
+
+    if (out_sent != NULL) {
+        *out_sent = sent;
+    }
+
+    if (rc != XURY_OK) {
+        return rc;
+    }
+    if (sent != len) {
+        return XURY_ERR_PARTIAL_WRITE;
+    }
+    return XURY_OK;
+}
+
+/*
+ * ============================================================================
+ * PUBLIC — RECV (STREAM / TCP)
+ * ============================================================================
+ */
+
+xury_err_t xury_sock_recv(xury_sock_t s,
+                          void *buf,
+                          size_t buf_cap,
+                          size_t *out_len,
+                          uint32_t timeout_ms)
+{
+    if (out_len != NULL) {
+        *out_len = 0u;
+    }
+
+    if (s == XURY_SOCK_INVALID) {
+        return XURY_ERR_INVAL;
+    }
+    if (buf == NULL && buf_cap > 0u) {
+        return XURY_ERR_INVAL;
+    }
+    if (out_len == NULL) {
+        return XURY_ERR_INVAL;
+    }
+
+#if defined(__GNUC__) || defined(__clang__)
+    if (!HAVE_PLATFORM_SOCK_RECV) {
+        return XURY_ERR_NOT_IMPLEMENTED;
+    }
+#endif
+
+    size_t n = 0u;
+    xury_err_t rc = xury_platform_sock_recv(s,
+                                            buf,
+                                            buf_cap,
+                                            &n,
+                                            timeout_ms);
     if (rc != XURY_OK) {
         return rc;
     }
