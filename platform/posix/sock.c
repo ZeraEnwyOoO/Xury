@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -187,7 +187,6 @@ static xury_err_t sock_errno_to_xury(int e)
     default:             return XURY_ERR_IO;
     }
 }
- /* ---- continued from part 1/2 ---- */
 
 /*
  * ============================================================================
@@ -411,7 +410,7 @@ xury_err_t xury_platform_sock_set_interface(xury_sock_t s,
 
 /*
  * ============================================================================
- * SEND
+ * SEND (DATAGRAM)
  * ============================================================================
  */
 
@@ -444,7 +443,7 @@ xury_err_t xury_platform_sock_sendto(xury_sock_t s,
 
 /*
  * ============================================================================
- * RECV
+ * RECV (DATAGRAM)
  * ============================================================================
  */
 
@@ -502,6 +501,110 @@ xury_err_t xury_platform_sock_recvfrom(xury_sock_t s,
             return rc;
         }
     }
+    return XURY_OK;
+}
+
+/*
+ * ============================================================================
+ * SEND (STREAM / TCP)
+ * ============================================================================
+ */
+
+xury_err_t xury_platform_sock_send(xury_sock_t s,
+                                   const void *buf,
+                                   size_t len,
+                                   size_t *out_sent)
+{
+    if (s == XURY_SOCK_INVALID || out_sent == NULL) {
+        return XURY_ERR_INVAL;
+    }
+    *out_sent = 0u;
+
+    if (buf == NULL && len > 0u) {
+        return XURY_ERR_INVAL;
+    }
+
+    /*
+     * send(2) on a connected stream socket. We do not loop on partial
+     * writes here: the caller decides whether to retry the remainder,
+     * and the dispatch layer reports the short write as
+     * XURY_ERR_PARTIAL_WRITE.
+     *
+     * A return of 0 from send() is possible in theory but not on a
+     * connected TCP socket with len > 0; we treat it as a short write
+     * and let the caller react.
+     */
+    ssize_t n = send(s, buf, len, 0);
+    if (n < 0) {
+        return sock_errno_to_xury(errno);
+    }
+    *out_sent = (size_t)n;
+    return XURY_OK;
+}
+
+/*
+ * ============================================================================
+ * RECV (STREAM / TCP)
+ * ============================================================================
+ */
+
+xury_err_t xury_platform_sock_recv(xury_sock_t s,
+                                   void *buf,
+                                   size_t buf_cap,
+                                   size_t *out_len,
+                                   uint32_t timeout_ms)
+{
+    if (s == XURY_SOCK_INVALID || out_len == NULL) {
+        return XURY_ERR_INVAL;
+    }
+    *out_len = 0u;
+
+    if (buf == NULL && buf_cap > 0u) {
+        return XURY_ERR_INVAL;
+    }
+
+    /* Wait for readability if a timeout was requested. */
+    if (timeout_ms > 0u) {
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(s, &rfds);
+
+        struct timeval tv;
+        if (timeout_ms == UINT32_MAX) {
+            /* Wait forever: pass NULL to select. */
+            if (select(s + 1, &rfds, NULL, NULL, NULL) < 0) {
+                return sock_errno_to_xury(errno);
+            }
+        } else {
+            tv.tv_sec  = (time_t)(timeout_ms / 1000u);
+            tv.tv_usec = (suseconds_t)((timeout_ms % 1000u) * 1000u);
+            int rv = select(s + 1, &rfds, NULL, NULL, &tv);
+            if (rv < 0) {
+                return sock_errno_to_xury(errno);
+            }
+            if (rv == 0) {
+                return XURY_ERR_TIMEOUT;
+            }
+        }
+    }
+
+    ssize_t n = recv(s, buf, buf_cap, 0);
+    if (n < 0) {
+        return sock_errno_to_xury(errno);
+    }
+
+    /*
+     * recv(2) returning 0 on a connected stream socket means the peer
+     * performed an orderly shutdown. This is a real end-of-stream
+     * condition, not a success with zero bytes — we report it as
+     * XURY_ERR_SOCKET_CLOSED so the caller can distinguish "connection
+     * ended" from "XURY_OK with *out_len == 0", which cannot happen.
+     */
+    if (n == 0) {
+        return XURY_ERR_SOCKET_CLOSED;
+    }
+
+    *out_len = (size_t)n;
     return XURY_OK;
 }
 
@@ -706,6 +809,7 @@ xury_err_t xury_platform_ifaces_list(xury_platform_iface_t *out,
     *out_count = written;
     return XURY_OK;
 }
+
 /*
  * ============================================================================
  * END OF FILE
