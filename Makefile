@@ -9,6 +9,7 @@
 #   scan/         scan phase (F)
 #   analysis/     analysis phase (G)
 #   smart/        smart phase (J)
+#   weapons/      weapons phase (H)
 #   test/         unit tests
 #
 # ═══════════════════════════════════════════════════════════
@@ -18,7 +19,7 @@ AR       ?= ar
 CFLAGS   ?= -std=c11 -Wall -Wextra -O2 -g
 CPPFLAGS ?=
 LDFLAGS  ?=
-LDLIBS   ?= -lm
+LDLIBS   ?= -lm -lpthread
 
 PLATFORM ?= $(shell uname -s | tr '[:upper:]' '[:lower:]')
 
@@ -76,6 +77,9 @@ LIB_SRCS := \
     smart/cache.c \
     smart/early_term.c \
     smart/learning.c \
+    weapons/upnp.c \
+    weapons/upnp_http.c \
+    weapons/upnp_xml.c \
     $(PLATFORM_SRCS)
 
 LIB      := build/libxury.a
@@ -105,7 +109,10 @@ TEST_SRCS := \
     test/unit/analysis/test_analysis.c \
     test/unit/smart/test_cache.c \
     test/unit/smart/test_early_term.c \
-    test/unit/smart/test_learning.c
+    test/unit/smart/test_learning.c \
+    test/unit/weapons/test_upnp_xml.c \
+    test/unit/weapons/test_upnp_http.c \
+    test/unit/weapons/test_upnp.c
 
 TEST_BINS := $(TEST_SRCS:test/unit/%.c=build/tests/%)
 
@@ -164,6 +171,10 @@ build/tests/analysis/%: test/unit/analysis/%.c $(LIB)
 	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(LIB) $(LDFLAGS) $(LDLIBS) -o $@
 
 build/tests/smart/%: test/unit/smart/%.c $(LIB)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(LIB) $(LDFLAGS) $(LDLIBS) -o $@
+
+build/tests/weapons/%: test/unit/weapons/%.c $(LIB)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(LIB) $(LDFLAGS) $(LDLIBS) -o $@
 
