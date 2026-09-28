@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -31,11 +31,28 @@
  * test binary without resorting to non-blocking plumbing that would
  * obscure the HTTP logic under test.
  *
- * The HTTP responses used in the fixtures are complete, valid
- * HTTP/1.1 messages as a compliant server would send them. Every
- * status line, header, and body is a real shape a UPnP IGD gateway
- * could produce. No response is invented to make the parser do
- * something it would never see.
+ * ----------------------------------------------------------------------------
+ * Threading and blocking notes
+ * ----------------------------------------------------------------------------
+ *
+ * An earlier version of this file could hang indefinitely. Two
+ * sources of hang were possible:
+ *
+ *   1. The accepted connection was left in blocking mode. A race
+ *      between poll() and read() could then block read() forever
+ *      if poll() reported data that a previous read() had already
+ *      consumed. The fix is to set O_NONBLOCK on the accepted
+ *      socket.
+ *
+ *   2. The listener was blocking. If the client never connected,
+ *      accept() would block the server thread forever, and
+ *      pthread_join() in srv_finish() would hang the test. The fix
+ *      is to poll() the listener with a bounded timeout before
+ *      accept().
+ *
+ * Both fixes are in place. The server thread is now guaranteed to
+ * terminate, and the client's recv() honors its own timeout_ms, so
+ * neither side can block indefinitely.
  *
  * Platform note: the test server uses POSIX sockets directly
  * (socket, bind, listen, accept, read, write, close) rather than
@@ -70,18 +87,6 @@
  * ============================================================================
  * TEST SERVER
  * ============================================================================
- *
- * A one-shot loopback TCP server that runs in a background thread.
- * The test opens a listener, spawns the server thread, connects with
- * a real Xury TCP socket, and lets the two sides exchange bytes.
- *
- * The server thread:
- *   1. accept()s one connection,
- *   2. drains whatever request bytes the client sent,
- *   3. writes the canned response,
- *   4. closes the connection.
- *
- * The listener is closed by the main thread after the exchange.
  */
 
 typedef struct {
@@ -99,6 +104,9 @@ typedef struct {
  * timeout expires. We do not parse the request; we only need to
  * consume it so the client's send() does not deadlock waiting for
  * buffer space.
+ *
+ * The socket is non-blocking (set by the caller), so read() may
+ * return EAGAIN. That is expected and means the request is done.
  */
 static void drain_request(int conn)
 {
@@ -111,12 +119,18 @@ static void drain_request(int conn)
         return;
     }
 
-    /* Read until a short poll comes up empty. */
+    /* Read until a short poll comes up empty or EAGAIN. */
     for (;;) {
         char buf[1024];
         ssize_t n = read(conn, buf, sizeof(buf));
-        if (n <= 0) {
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                return;   /* nothing more right now */
+            }
             return;
+        }
+        if (n == 0) {
+            return;       /* peer closed */
         }
         pfd.revents = 0;
         if (poll(&pfd, 1, 50) <= 0) {
@@ -129,10 +143,34 @@ static void *server_thread_fn(void *arg)
 {
     test_server_t *srv = (test_server_t *)arg;
 
+    /*
+     * Bounded accept. A blocking accept() would hang this thread
+     * forever if the client never connected, and pthread_join() in
+     * srv_finish() would then hang the test binary.
+     */
+    struct pollfd lpfd;
+    lpfd.fd = srv->listen_fd;
+    lpfd.events = POLLIN;
+    if (poll(&lpfd, 1, 3000) <= 0) {
+        srv->served_ok = false;
+        return NULL;
+    }
+
     int conn = accept(srv->listen_fd, NULL, NULL);
     if (conn < 0) {
         srv->served_ok = false;
         return NULL;
+    }
+
+    /*
+     * Put the accepted socket in non-blocking mode. Without this, a
+     * race between poll() and read() in drain_request() could block
+     * read() forever: poll() could report data that a previous read
+     * had already consumed.
+     */
+    int flags = fcntl(conn, F_GETFL, 0);
+    if (flags >= 0) {
+        (void)fcntl(conn, F_SETFL, flags | O_NONBLOCK);
     }
 
     drain_request(conn);
@@ -142,10 +180,21 @@ static void *server_thread_fn(void *arg)
     while (written < srv->response_len) {
         ssize_t n = write(conn, p + written,
                           srv->response_len - written);
-        if (n <= 0) {
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                /* Brief backoff; the client is reading. */
+                struct pollfd wpfd;
+                wpfd.fd = conn;
+                wpfd.events = POLLOUT;
+                (void)poll(&wpfd, 1, 100);
+                continue;
+            }
             close(conn);
             srv->served_ok = false;
             return NULL;
+        }
+        if (n == 0) {
+            break;
         }
         written += (size_t)n;
     }
@@ -224,9 +273,7 @@ static void srv_finish(test_server_t *srv)
 }
 
 /*
- * Connect a fresh Xury TCP socket to the test server. On success
- * returns XURY_OK and fills *out_sock. On any error the socket is
- * already closed.
+ * Connect a fresh Xury TCP socket to the test server.
  */
 static xury_err_t connect_to(const test_server_t *srv, xury_sock_t *out_sock)
 {
@@ -449,7 +496,6 @@ static void test_get_500_fault(void)
     rc = xury_upnp_http_get(s, "127.0.0.1", "/", 3000u,
                             body, sizeof(body), &resp);
 
-    /* A SOAP fault is a real HTTP response, not an error. */
     TEST_ASSERT_EQ(rc, XURY_OK);
     TEST_ASSERT_EQ(resp.status_code, 500);
     TEST_ASSERT_EQ(resp.body_len, 42u);
@@ -508,7 +554,6 @@ static void test_get_no_content_length(void)
     rc = xury_upnp_http_get(s, "127.0.0.1", "/", 3000u,
                             body, sizeof(body), &resp);
 
-    /* 200 without Content-Length is a protocol violation. */
     TEST_ASSERT_EQ(rc, XURY_ERR_BAD_ENDPOINT);
 
     (void)xury_sock_close(s);
@@ -534,7 +579,6 @@ static void test_get_chunked_rejected(void)
     rc = xury_upnp_http_get(s, "127.0.0.1", "/", 3000u,
                             body, sizeof(body), &resp);
 
-    /* Chunked is explicitly out of scope for v1. */
     TEST_ASSERT_EQ(rc, XURY_ERR_NOT_SUPPORTED);
 
     (void)xury_sock_close(s);
@@ -560,7 +604,6 @@ static void test_get_204(void)
     rc = xury_upnp_http_get(s, "127.0.0.1", "/", 3000u,
                             body, sizeof(body), &resp);
 
-    /* 204 has no body and no Content-Length by definition. */
     TEST_ASSERT_EQ(rc, XURY_OK);
     TEST_ASSERT_EQ(resp.status_code, 204);
     TEST_ASSERT_EQ(resp.body_len, 0u);
@@ -609,7 +652,6 @@ static void test_get_body_truncated(void)
         return;
     }
 
-    /* Caller buffer smaller than the 18-byte body. */
     char body[8];
     xury_upnp_http_response_t resp;
     rc = xury_upnp_http_get(s, "127.0.0.1", "/", 3000u,
