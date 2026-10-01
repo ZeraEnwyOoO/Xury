@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -23,7 +23,7 @@
  *
  * Exercises the UPnP IGD weapon entry point.
  *
- * The tests fall into three groups:
+ * The tests fall into four groups:
  *
  *   1. Argument validation. NULL ctx, NULL out, non-IPv4 peer,
  *      empty peer ip, zero peer port.
@@ -34,7 +34,12 @@
  *      function must return XURY_OK with success = false and
  *      elapsed_ms = 0, without touching the network.
  *
- *   3. Honest failure on a host with no UPnP-capable gateway.
+ *   3. Local-port requirement. UPNP creates a port mapping for a
+ *      local listener. If ctx->local_port == 0, there is nothing
+ *      to expose, and the weapon must fail honestly (XURY_OK with
+ *      success = false, elapsed_ms = 0) rather than guess.
+ *
+ *   4. Honest failure on a host with no UPnP-capable gateway.
  *      The SSDP phase will time out. The function must return
  *      XURY_OK with success = false, with elapsed_ms recorded.
  *      This is the same "no fabricated result" contract used by
@@ -75,10 +80,15 @@
  * rejects the attempt before any network call; in the honest
  * failure test, the SSDP phase fails before any peer packet is
  * sent.
+ *
+ * local_port is set explicitly by the caller: 0 for the fast-path
+ * and local-port-rejection tests, a non-zero value for the
+ * honest-failure test.
  */
 static xury_weapon_attempt_ctx_t make_ctx(const char *peer_ip,
                                           uint16_t peer_port,
-                                          bool upnp_available)
+                                          bool upnp_available,
+                                          uint16_t local_port)
 {
     xury_weapon_attempt_ctx_t ctx;
     memset(&ctx, 0, sizeof(ctx));
@@ -93,6 +103,7 @@ static xury_weapon_attempt_ctx_t make_ctx(const char *peer_ip,
     ctx.peer.ip[n] = '\0';
 
     ctx.applicability_ctx.upnp_available = upnp_available;
+    ctx.local_port = local_port;
 
     /* A short timeout so the honest-failure test does not stall the
      * suite. UPNP's SSDP deadline is internal (SSDP_MX_SECONDS);
@@ -100,6 +111,26 @@ static xury_weapon_attempt_ctx_t make_ctx(const char *peer_ip,
     ctx.timeout_ms = 100u;
 
     return ctx;
+}
+
+/*
+ * Convenience wrappers for the common cases. They keep the test
+ * bodies short and make the intended local_port value explicit at
+ * the call site.
+ */
+
+static xury_weapon_attempt_ctx_t ctx_no_listener(const char *peer_ip,
+                                                 uint16_t peer_port,
+                                                 bool upnp_available)
+{
+    return make_ctx(peer_ip, peer_port, upnp_available, 0u);
+}
+
+static xury_weapon_attempt_ctx_t ctx_with_listener(const char *peer_ip,
+                                                   uint16_t peer_port,
+                                                   uint16_t local_port)
+{
+    return make_ctx(peer_ip, peer_port, true, local_port);
 }
 
 /*
@@ -119,7 +150,7 @@ static void test_null_ctx(void)
 static void test_null_out(void)
 {
     xury_weapon_attempt_ctx_t ctx =
-        make_ctx("192.0.2.1", 1234u, true);
+        ctx_with_listener("192.0.2.1", 1234u, 5000u);
     xury_err_t rc = xury_weapon_upnp_try(&ctx, NULL);
     TEST_ASSERT_EQ(rc, XURY_ERR_INVAL);
 }
@@ -127,7 +158,7 @@ static void test_null_out(void)
 static void test_bad_family(void)
 {
     xury_weapon_attempt_ctx_t ctx =
-        make_ctx("192.0.2.1", 1234u, true);
+        ctx_with_listener("192.0.2.1", 1234u, 5000u);
     ctx.peer.family = XURY_AF_INET6;
     xury_weapon_attempt_result_t out;
     memset(&out, 0, sizeof(out));
@@ -138,7 +169,7 @@ static void test_bad_family(void)
 static void test_unspec_family(void)
 {
     xury_weapon_attempt_ctx_t ctx =
-        make_ctx("192.0.2.1", 1234u, true);
+        ctx_with_listener("192.0.2.1", 1234u, 5000u);
     ctx.peer.family = XURY_AF_UNSPEC;
     xury_weapon_attempt_result_t out;
     memset(&out, 0, sizeof(out));
@@ -148,7 +179,8 @@ static void test_unspec_family(void)
 
 static void test_empty_ip(void)
 {
-    xury_weapon_attempt_ctx_t ctx = make_ctx("", 1234u, true);
+    xury_weapon_attempt_ctx_t ctx =
+        ctx_with_listener("", 1234u, 5000u);
     xury_weapon_attempt_result_t out;
     memset(&out, 0, sizeof(out));
     xury_err_t rc = xury_weapon_upnp_try(&ctx, &out);
@@ -158,7 +190,7 @@ static void test_empty_ip(void)
 static void test_zero_port(void)
 {
     xury_weapon_attempt_ctx_t ctx =
-        make_ctx("192.0.2.1", 0u, true);
+        ctx_with_listener("192.0.2.1", 0u, 5000u);
     xury_weapon_attempt_result_t out;
     memset(&out, 0, sizeof(out));
     xury_err_t rc = xury_weapon_upnp_try(&ctx, &out);
@@ -177,9 +209,15 @@ static void test_fast_path_rejection(void)
      * upnp_available == false: the selection layer has already
      * decided UPNP cannot work. The weapon must report an honest
      * failure without touching the network.
+     *
+     * local_port is set to a valid non-zero value so that the
+     * rejection we observe comes from the applicability flag, not
+     * from the local-port check.
      */
     xury_weapon_attempt_ctx_t ctx =
-        make_ctx("192.0.2.1", 1234u, false);
+        ctx_with_listener("192.0.2.1", 1234u, 5000u);
+    ctx.applicability_ctx.upnp_available = false;
+
     xury_weapon_attempt_result_t out;
 
     /* Pre-fill with a sentinel so we can detect writes. */
@@ -202,7 +240,8 @@ static void test_fast_path_rejection_null_ip_still_validated(void)
      * Even with upnp_available == false, the argument validation
      * runs first. An empty ip is still XURY_ERR_INVAL.
      */
-    xury_weapon_attempt_ctx_t ctx = make_ctx("", 1234u, false);
+    xury_weapon_attempt_ctx_t ctx =
+        ctx_no_listener("", 1234u, false);
     xury_weapon_attempt_result_t out;
     memset(&out, 0, sizeof(out));
     xury_err_t rc = xury_weapon_upnp_try(&ctx, &out);
@@ -211,13 +250,84 @@ static void test_fast_path_rejection_null_ip_still_validated(void)
 
 /*
  * ============================================================================
+ * LOCAL-PORT REQUIREMENT
+ * ============================================================================
+ *
+ * UPNP creates a port mapping for a local listener. A local_port of
+ * 0 means the caller did not provide a listener, and there is
+ * nothing to expose. The weapon must fail honestly rather than
+ * guess.
+ */
+
+static void test_zero_local_port_honest_failure(void)
+{
+    /*
+     * upnp_available == true but local_port == 0: there is no
+     * local listener to expose. The weapon must report success =
+     * false without touching the network.
+     */
+    xury_weapon_attempt_ctx_t ctx =
+        ctx_no_listener("192.0.2.1", 1234u, true);
+
+    xury_weapon_attempt_result_t out;
+    memset(&out, 0x5A, sizeof(out));
+
+    xury_err_t rc = xury_weapon_upnp_try(&ctx, &out);
+    TEST_ASSERT_EQ(rc, XURY_OK);
+    TEST_ASSERT(!out.success);
+    TEST_ASSERT_EQ(out.elapsed_ms, 0u);
+    TEST_ASSERT_EQ(out.established_peer.family, XURY_AF_UNSPEC);
+    TEST_ASSERT_EQ(out.established_peer.port, 0u);
+    TEST_ASSERT(out.established_peer.ip[0] == '\0');
+}
+
+static void test_zero_local_port_validation_runs_first(void)
+{
+    /*
+     * The argument validation runs before the local-port check.
+     * An empty peer ip with local_port == 0 is still XURY_ERR_INVAL,
+     * not an honest-failure return.
+     */
+    xury_weapon_attempt_ctx_t ctx =
+        ctx_no_listener("", 1234u, true);
+    xury_weapon_attempt_result_t out;
+    memset(&out, 0, sizeof(out));
+    xury_err_t rc = xury_weapon_upnp_try(&ctx, &out);
+    TEST_ASSERT_EQ(rc, XURY_ERR_INVAL);
+}
+
+static void test_nonzero_local_port_reaches_ssdp(void)
+{
+    /*
+     * With a non-zero local port and upnp_available = true, the
+     * weapon proceeds past the fast-path checks and into the SSDP
+     * phase. In an offline test environment there is no gateway,
+     * so SSDP times out and the weapon reports an honest failure.
+     * The point of this test is that the fast-path rejection did
+     * NOT fire: elapsed_ms is recorded, proving the SSDP phase ran.
+     */
+    xury_weapon_attempt_ctx_t ctx =
+        ctx_with_listener("192.0.2.1", 1234u, 5000u);
+
+    xury_weapon_attempt_result_t out;
+    memset(&out, 0, sizeof(out));
+
+    xury_err_t rc = xury_weapon_upnp_try(&ctx, &out);
+    TEST_ASSERT_EQ(rc, XURY_OK);
+    TEST_ASSERT(!out.success);
+    /* SSDP phase ran, so elapsed_ms is a real measurement. */
+    TEST_ASSERT(out.elapsed_ms > 0u);
+}
+
+/*
+ * ============================================================================
  * HONEST FAILURE — NO GATEWAY
  * ============================================================================
  *
- * With upnp_available == true but no gateway actually present, the
- * SSDP phase times out. The weapon must report an honest failure:
- * XURY_OK, success = false, elapsed_ms recorded, established_peer
- * zeroed.
+ * With upnp_available == true and a non-zero local port, but no
+ * gateway actually present, the SSDP phase times out. The weapon
+ * must report an honest failure: XURY_OK, success = false,
+ * elapsed_ms recorded, established_peer zeroed.
  *
  * On a host that happens to have a real UPnP gateway on its LAN,
  * the SSDP phase may find one and proceed. In that case the test
@@ -229,7 +339,8 @@ static void test_fast_path_rejection_null_ip_still_validated(void)
 static void test_honest_outcome(void)
 {
     xury_weapon_attempt_ctx_t ctx =
-        make_ctx("192.0.2.1", 1234u, true);
+        ctx_with_listener("192.0.2.1", 1234u, 5000u);
+
     xury_weapon_attempt_result_t out;
     memset(&out, 0, sizeof(out));
 
@@ -263,7 +374,8 @@ static void test_honest_failure_never_returns_error(void)
      * reach a gateway is never reported as an error return.
      */
     xury_weapon_attempt_ctx_t ctx =
-        make_ctx("198.51.100.1", 5555u, true);
+        ctx_with_listener("198.51.100.1", 5555u, 6000u);
+
     xury_weapon_attempt_result_t out;
     memset(&out, 0x5A, sizeof(out));
 
@@ -295,6 +407,11 @@ static void run_all_tests(void)
     /* Fast-path applicability rejection */
     TEST_RUN(test_fast_path_rejection);
     TEST_RUN(test_fast_path_rejection_null_ip_still_validated);
+
+    /* Local-port requirement */
+    TEST_RUN(test_zero_local_port_honest_failure);
+    TEST_RUN(test_zero_local_port_validation_runs_first);
+    TEST_RUN(test_nonzero_local_port_reaches_ssdp);
 
     /* Honest failure */
     TEST_RUN(test_honest_outcome);
