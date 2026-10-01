@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -87,6 +87,24 @@
  * elapsed_ms must be recorded on every successful return (XURY_OK),
  * including failed attempts.
  *
+ * established_peer semantics diverge per weapon
+ * ---------------------------------------------
+ * The result struct has one field, established_peer, but its meaning
+ * depends on which weapon produced the result:
+ *
+ *   ipv6.c  — success means "the peer replied to a probe". The
+ *             established_peer is the peer that replied.
+ *
+ *   upnp.c  — success means "the router accepted a port mapping".
+ *             The peer has NOT necessarily been contacted, and has
+ *             NOT necessarily replied. established_peer is copied
+ *             from ctx->peer for well-formedness only.
+ *
+ * A consumer of xury_weapon_attempt_result_t must not assume that
+ * success means the same thing across all weapons. If the specific
+ * meaning matters (blitz/race.c will need to know), check the weapon
+ * alongside success. See the established_peer comment in upnp.c.
+ *
  * Dependencies
  * ------------
  * This header includes only <xury/types.h> and the applicability
@@ -145,6 +163,22 @@ typedef struct {
      * success is expected.
      */
     uint32_t timeout_ms;
+
+    /*
+     * Local port this host is listening on, for weapons that need
+     * to expose a service to the peer (UPNP, NATPMP, PCP).
+     *
+     * 0 means "no local listener / caller did not provide one".
+     * For weapons that do not expose a local service (IPV6, HOLE,
+     * PREDICT), this field is ignored.
+     *
+     * For UPNP/NATPMP/PCP, the caller must set this to the port
+     * the host is listening on. If 0, the weapon must fail
+     * honestly (success = false) rather than guess, because a
+     * port mapping to an unknown internal port is not a mapping
+     * the caller can use.
+     */
+    uint16_t local_port;
 } xury_weapon_attempt_ctx_t;
 
 /*
@@ -157,19 +191,25 @@ typedef struct {
     /*
      * True if the weapon achieved its goal.
      *
-     * For ipv6.c, this means: a reply was received from ctx->peer
-     * within timeout_ms. It does NOT mean a transport connection
-     * was established — that is the host's responsibility after
-     * handoff (see docs/AI_CONTEXT.md, "What Xury is NOT").
+     * The meaning of "its goal" is weapon-specific. For ipv6.c it
+     * means "the peer replied". For upnp.c it means "the router
+     * accepted a port mapping". Consumers must check the weapon
+     * alongside success when the distinction matters; see the
+     * established_peer note in the file header.
      */
     bool success;
 
     /*
      * The endpoint the weapon established a path to.
      *
-     * Valid only when success == true. For ipv6.c this is always a
-     * copy of ctx->peer (no hostname resolution, no multi-address
-     * selection at this layer). On failure, zeroed.
+     * Valid only when success == true. Its meaning is weapon-specific:
+     *
+     *   ipv6.c  — a copy of ctx->peer, which replied to the probe.
+     *   upnp.c  — a copy of ctx->peer, provided for well-formedness;
+     *             the peer was not contacted by this weapon.
+     *
+     * On failure, zeroed. No weapon invents an endpoint it did not
+     * establish; see the file header for the full contract.
      */
     xury_endpoint_t established_peer;
 
@@ -227,6 +267,8 @@ typedef struct {
  * not be acted on. This mirrors the "honest failure" contract in
  * docs/PROBING_DESIGN.md §4: no fabricated result, no wasted round
  * trip, but also no error code for a predictable real-world outcome.
+ *
+ * ctx->local_port is ignored by this weapon.
  */
 xury_err_t xury_weapon_ipv6_try(const xury_weapon_attempt_ctx_t *ctx,
                                 xury_weapon_attempt_result_t *out);
