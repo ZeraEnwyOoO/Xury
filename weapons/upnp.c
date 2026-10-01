@@ -56,11 +56,29 @@
  *     try a second gateway, we do not fall back to NAT-PMP. Those
  *     are orchestrator concerns (blitz/race.c), not weapon concerns.
  *
+ *   - The internal port of the mapping is ctx->local_port, the port
+ *     this host is listening on. If the caller did not provide one
+ *     (ctx->local_port == 0), the weapon cannot create a usable
+ *     mapping and fails honestly rather than guessing.
+ *
  *   - The external port the gateway chooses is not reported back
  *     through established_peer. established_peer is a copy of
  *     ctx->peer, matching the Phase H weapon contract: the weapon
  *     clears a path to the caller's peer, it does not discover a
  *     new endpoint. (Discovering an endpoint is the MIRROR weapon.)
+ *
+ * ----------------------------------------------------------------------------
+ * established_peer semantics diverge from ipv6.c
+ * ----------------------------------------------------------------------------
+ *
+ * For ipv6.c, success means "the peer replied to a probe", and
+ * established_peer is the peer that replied. For upnp.c, success
+ * means "the router accepted a port mapping" — the peer has NOT
+ * necessarily been contacted and has NOT necessarily replied.
+ * established_peer is copied from ctx->peer for well-formedness
+ * only. A consumer of xury_weapon_attempt_result_t must not assume
+ * that success means the same thing across all weapons. If the
+ * distinction matters, check the weapon alongside success.
  *
  * ----------------------------------------------------------------------------
  * What this file does NOT do
@@ -82,7 +100,6 @@
  * ----------------------------------------------------------------------------
  *
  *   core/internal/sock.h            TCP and UDP socket primitives
- *   core/internal/bytes.h           cursor and byte helpers
  *   core/internal/rand.h            SSDP MX and request-id generation
  *   platform/platform.h             monotonic time
  *   weapons/internal/weapon_ops.h   the weapon contract
@@ -567,21 +584,18 @@ static xury_err_t tcp_connect(const xury_endpoint_t *ep,
  * the same envelope structure.
  *
  * The external port is set to 0, which asks the gateway to choose
- * an available port. The internal port is the local port of
- * ctx->peer — but ctx->peer is a remote endpoint, not our local
- * port. UPnP maps a public port to a port on this host, so the
- * internal port must be a port on this host.
+ * an available port. The internal port is local_port: the port this
+ * host is listening on. The internal client is the caller's peer
+ * ip, which for a typical Xury deployment is the host's own LAN
+ * address (the caller is expected to have resolved its own local
+ * address before calling the weapon).
  *
- * For v1, the internal port is set to the same port number as the
- * peer's port. This is a conservative choice: the caller is
- * expected to run a listener on that port. If the caller has no
- * listener, the mapping is created but no data flows until it does.
- * The API does not currently carry a "local port to expose" field,
- * and adding one is a contract change we do not make here. See the
- * note in weapons/internal/upnp.h.
+ * A local_port of 0 is rejected before this function is called;
+ * see xury_weapon_upnp_try().
  */
 static xury_err_t build_add_port_mapping(const char *service_type,
                                          const xury_endpoint_t *peer,
+                                         uint16_t local_port,
                                          char *buf, size_t cap,
                                          size_t *out_len)
 {
@@ -610,7 +624,7 @@ static xury_err_t build_add_port_mapping(const char *service_type,
         "</s:Body>"
         "</s:Envelope>",
         service_type,
-        (unsigned)peer->port,
+        (unsigned)local_port,
         peer->ip,
         (unsigned)UPNP_LEASE_SECONDS);
 
@@ -763,6 +777,16 @@ xury_err_t xury_weapon_upnp_try(const xury_weapon_attempt_ctx_t *ctx,
         return XURY_OK;
     }
 
+    /*
+     * UPNP creates a port mapping for a local listener. If the
+     * caller did not provide a local port, there is nothing to
+     * expose: the mapping would point at an unknown internal port.
+     * Fail honestly rather than guess. See weapon_ops.h.
+     */
+    if (ctx->local_port == 0u) {
+        return XURY_OK;   /* success = false, elapsed_ms = 0 */
+    }
+
     uint64_t t0 = xury_platform_time_ms();
 
     /*
@@ -854,6 +878,7 @@ xury_err_t xury_weapon_upnp_try(const xury_weapon_attempt_ctx_t *ctx,
     char soap[SOAP_REQ_CAP];
     size_t soap_len = 0u;
     rc = build_add_port_mapping(service_type, &ctx->peer,
+                                ctx->local_port,
                                 soap, sizeof(soap), &soap_len);
     if (rc != XURY_OK) {
         out->elapsed_ms = (uint32_t)(xury_platform_time_ms() - t0);
@@ -913,8 +938,30 @@ xury_err_t xury_weapon_upnp_try(const xury_weapon_attempt_ctx_t *ctx,
 
     out->success = success;
     if (success) {
-        /* The weapon cleared a path to the caller's peer; it did
-         * not discover a new endpoint. See weapons/internal/upnp.h. */
+        /*
+         * established_peer semantics diverge across Phase H weapons.
+         *
+         *   ipv6.c  — success means "the peer replied to a probe".
+         *             established_peer is the peer that replied.
+         *
+         *   upnp.c  — success means "the router accepted the port
+         *             mapping". The peer has NOT necessarily been
+         *             contacted, and has NOT necessarily replied.
+         *             established_peer is copied from ctx->peer as
+         *             a convenience so that every weapon returns a
+         *             well-formed result, but callers must not
+         *             interpret it as "the peer is reachable".
+         *
+         * blitz/race.c and any future consumer of
+         * xury_weapon_attempt_result_t must check ctx->weapon
+         * alongside success if they need to know what "success"
+         * actually proved for this attempt. Do NOT assume success
+         * means the same thing across all weapons.
+         *
+         * If a future weapon needs to report a genuinely different
+         * endpoint (a relay peer, a discovered public address),
+         * that is a new decision and must not be smuggled in here.
+         */
         out->established_peer = ctx->peer;
     }
     out->elapsed_ms = (uint32_t)(xury_platform_time_ms() - t0);
