@@ -118,6 +118,7 @@
 #include "core/internal/bytes.h"
 #include "core/internal/rand.h"
 #include "platform/platform.h"
+#include "api/internal/types.h"
 
 #include "peer/internal/mirror.h"
 
