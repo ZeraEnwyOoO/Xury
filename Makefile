@@ -10,6 +10,7 @@
 #   analysis/     analysis phase (G)
 #   smart/        smart phase (J)
 #   weapons/      weapons phase (H)
+#   peer/         peer phase (I)
 #   test/         unit tests
 #
 # ═══════════════════════════════════════════════════════════
@@ -80,6 +81,9 @@ LIB_SRCS := \
     weapons/upnp.c \
     weapons/upnp_http.c \
     weapons/upnp_xml.c \
+    weapons/natpmp.c \
+    weapons/pcp.c \
+    peer/mirror.c \
     $(PLATFORM_SRCS)
 
 LIB      := build/libxury.a
@@ -112,7 +116,10 @@ TEST_SRCS := \
     test/unit/smart/test_learning.c \
     test/unit/weapons/test_upnp_xml.c \
     test/unit/weapons/test_upnp_http.c \
-    test/unit/weapons/test_upnp.c
+    test/unit/weapons/test_upnp.c \
+    test/unit/weapons/test_natpmp.c \
+    test/unit/weapons/test_pcp.c \
+    test/unit/peer/test_mirror.c
 
 TEST_BINS := $(TEST_SRCS:test/unit/%.c=build/tests/%)
 
@@ -175,6 +182,10 @@ build/tests/smart/%: test/unit/smart/%.c $(LIB)
 	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(LIB) $(LDFLAGS) $(LDLIBS) -o $@
 
 build/tests/weapons/%: test/unit/weapons/%.c $(LIB)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(LIB) $(LDFLAGS) $(LDLIBS) -o $@
+
+build/tests/peer/%: test/unit/peer/%.c $(LIB)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(LIB) $(LDFLAGS) $(LDLIBS) -o $@
 
