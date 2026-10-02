@@ -1,4 +1,4 @@
-/*
+ /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
  *
@@ -99,16 +99,35 @@
  * The mirror query uses the error codes already declared in
  * <xury/err.h>:
  *
- *   XURY_ERR_INVAL                peer or out_self is NULL
- *   XURY_ERR_MIRROR_FAIL          no response, or the peer refused
- *   XURY_ERR_MIRROR_BAD_RESPONSE  response malformed, wrong magic,
- *                                 wrong type, or wrong nonce
+ *   XURY_ERR_INVAL                peer or out_self is NULL, or the
+ *                                 peer endpoint is unusable
+ *   XURY_ERR_MIRROR_BAD_RESPONSE  response malformed: wrong magic,
+ *                                 wrong type, nonce mismatch, or
+ *                                 unparseable observed address
  *   XURY_ERR_TIMEOUT              no response within timeout_ms
- *   XURY_ERR_IO                   platform error creating or using
- *                                 the socket
+ *   XURY_ERR_IO                   platform error creating, binding,
+ *                                 or using the socket
+ *
+ * On the use of XURY_ERR_MIRROR_FAIL:
+ *   <xury/err.h> declares XURY_ERR_MIRROR_FAIL, and the future
+ *   public peer.h API (xury_mirror_query) is documented to return
+ *   it. In this minimal client-only implementation it is not used:
+ *
+ *     - A peer that does not answer produces XURY_ERR_TIMEOUT,
+ *       which is the precise code for "no response in time".
+ *
+ *     - XPRB has no refusal mechanism. A peer that does not want to
+ *       mirror simply does not reply, which is indistinguishable
+ *       from any other non-response. There is therefore no case
+ *       where XURY_ERR_MIRROR_FAIL describes what actually happened
+ *       better than XURY_ERR_TIMEOUT or XURY_ERR_MIRROR_BAD_RESPONSE.
+ *
+ *   The code is reserved for the Phase N public API, where a relay-
+ *   style refusal exchange may exist. It is not invented here and
+ *   not used speculatively.
  *
  * A transport-level failure (socket create, bind, send) surfaces as
- * the platform error code, not as XURY_ERR_MIRROR_FAIL.
+ * XURY_ERR_IO.
  *
  * ----------------------------------------------------------------------------
  * Dependencies
@@ -164,11 +183,14 @@ extern "C" {
  *   XURY_OK                       response received and parsed
  *   XURY_ERR_INVAL                peer or out_self is NULL, or
  *                                 peer is not a usable endpoint
- *   XURY_ERR_MIRROR_FAIL          no response from the peer
- *   XURY_ERR_MIRROR_BAD_RESPONSE  malformed response, wrong magic,
- *                                 wrong type, or nonce mismatch
+ *   XURY_ERR_MIRROR_BAD_RESPONSE  malformed response: wrong magic,
+ *                                 wrong type, nonce mismatch, or
+ *                                 unparseable observed address
  *   XURY_ERR_TIMEOUT              no response within timeout_ms
  *   XURY_ERR_IO                   platform error
+ *
+ * XURY_ERR_MIRROR_FAIL is not returned by this function. See the
+ * error-code note in the file header for why.
  *
  * On any failure, *out_self is zeroed (family UNSPEC, empty ip,
  * port 0). The function never invents an endpoint it did not
