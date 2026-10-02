@@ -35,32 +35,26 @@
  *
  * Rather than invent a vtable / dynamic registry before blitz's
  * dispatch needs are known, each weapon exposes one plain named
- * function:
+ * function in its own header:
  *
- *     xury_weapon_<name>_try(ctx, out)
+ *     weapons/internal/ipv6.h     -> xury_weapon_ipv6_try
+ *     weapons/internal/upnp.h     -> xury_weapon_upnp_try
+ *     weapons/internal/natpmp.h   -> xury_weapon_natpmp_try
+ *     weapons/internal/pcp.h      -> xury_weapon_pcp_try
+ *     weapons/internal/hole.h     -> xury_weapon_hole_try
+ *     weapons/internal/predict.h  -> xury_weapon_predict_try
  *
- * blitz/race.c will call these by name when it is built. If, later,
- * dynamic dispatch turns out to be necessary, a registry can be
- * layered on top without changing any weapon implementation — the
- * named function remains the unit of work.
+ * blitz/race.c will include the weapon headers it needs and call
+ * the functions by name. There is no central list of declarations
+ * here: each weapon owns its declaration, and this header owns only
+ * the shared context and result types plus the conventions that
+ * every weapon follows.
  *
  * This matches the existing pattern in the codebase:
  *
  *     xury_scan_sensing(...)          — plain named entry point
  *     xury_scan_probing(...)          — plain named entry point
  *     xury_classify_port_pattern(...) — plain named entry point
- *
- * Naming pattern (locked)
- * -----------------------
- *     xury_weapon_ipv6_try
- *     xury_weapon_upnp_try
- *     xury_weapon_natpmp_try
- *     xury_weapon_pcp_try
- *     xury_weapon_hole_try
- *     xury_weapon_predict_try
- *
- * (LAN is detection logic in scan/analysis, not a Phase H weapon —
- *  it has no _try function here.)
  *
  * No-server rule
  * --------------
@@ -111,7 +105,9 @@
  *               remain open. established_peer is a copy of ctx->peer.
  *
  *   predict.c — success means "a probe was acknowledged by a port
- *               near the predicted one". The peer was contacted.
+ *               near the predicted one". The peer was contacted, on
+ *               either its current endpoint or the predicted one.
+ *               established_peer is a copy of ctx->peer.
  *
  * A consumer of xury_weapon_attempt_result_t must not assume that
  * success means the same thing across all weapons. If the specific
@@ -233,20 +229,11 @@ typedef struct {
     /*
      * The endpoint the weapon established a path to.
      *
-     * Valid only when success == true. Its meaning is weapon-specific:
-     *
-     *   ipv6.c    — a copy of ctx->peer, which replied to the probe.
-     *   upnp.c    — a copy of ctx->peer, provided for well-formedness;
-     *               the peer was not contacted by this weapon.
-     *   natpmp.c  — same as upnp.c.
-     *   pcp.c     — same as upnp.c.
-     *   hole.c    — a copy of ctx->peer, from which an XHOL punch
-     *               was observed.
-     *   predict.c — a copy of ctx->peer, whose predicted port
-     *               acknowledged a probe.
+     * Valid only when success == true. Its meaning is weapon-specific;
+     * see the file header for the full table.
      *
      * On failure, zeroed. No weapon invents an endpoint it did not
-     * establish; see the file header for the full contract.
+     * establish.
      */
     xury_endpoint_t established_peer;
 
@@ -259,140 +246,6 @@ typedef struct {
      */
     uint32_t elapsed_ms;
 } xury_weapon_attempt_result_t;
-
-/*
- * ============================================================================
- * WEAPON ENTRY POINTS
- * ============================================================================
- *
- * One function per Phase H weapon. Each is implemented in its own
- * .c file under weapons/. All follow the same contract:
- *
- *   - NULL ctx or NULL out        -> XURY_ERR_INVAL
- *   - bad / unset ctx->peer       -> XURY_ERR_INVAL
- *   - ran, succeeded              -> XURY_OK, out->success = true
- *   - ran, peer did not respond   -> XURY_OK, out->success = false
- *   - platform / setup failure    -> an error code, out untouched
- *
- * out->elapsed_ms is written on every XURY_OK return.
- *
- * Declarations appear below in the locked build order:
- *
- *   IPV6 -> UPNP -> NATPMP -> PCP -> [peer/mirror.c] -> HOLE -> PREDICT
- *
- * Note: each weapon's primary declaration also lives in its own
- * weapons/internal/<name>.h header. Those headers exist for the
- * weapon's own .c file and for the weapon's unit tests. The
- * declarations below are duplicated here for the benefit of
- * orchestrators (blitz/race.c) that want a single place to see
- * every Phase H entry point without including every weapon header.
- * The duplication is a convenience, not a contract: if a signature
- * ever changes, both copies must change together.
- */
-
-/*
- * IPv6 direct reachability.
- *
- * Implements Phase H weapon XURY_WEAPON_IPV6 (priority 1).
- *
- * Sends one UDP probe to ctx->peer over IPv6 and waits up to
- * ctx->timeout_ms for any reply.
- *
- * Preconditions checked by this function (returns XURY_ERR_INVAL if
- * any fail):
- *   - ctx != NULL, out != NULL
- *   - ctx->peer.family == XURY_AF_INET6
- *   - ctx->peer.ip is non-empty and parses
- *   - ctx->peer.port != 0
- *
- * The applicability flags (ctx->applicability_ctx.ipv6_global,
- * .peer_has_ipv6) are checked as a fast-path rejection: if either
- * is false, the function returns XURY_OK with success = false and
- * elapsed_ms = 0 — it does not send a probe it already knows will
- * not be acted on. This mirrors the "honest failure" contract in
- * docs/PROBING_DESIGN.md §4: no fabricated result, no wasted round
- * trip, but also no error code for a predictable real-world outcome.
- *
- * ctx->local_port and ctx->predicted_peer_port are ignored.
- */
-xury_err_t xury_weapon_ipv6_try(const xury_weapon_attempt_ctx_t *ctx,
-                                xury_weapon_attempt_result_t *out);
-
-/*
- * UPnP IGD port mapping.
- *
- * Implements Phase H weapon XURY_WEAPON_UPNP (priority 3).
- *
- * Creates a port mapping on the local gateway via UPnP IGD.
- *
- * Preconditions:
- *   - ctx != NULL, out != NULL
- *   - ctx->peer.family == XURY_AF_INET (UPnP IGD is IPv4 only)
- *   - ctx->peer.ip non-empty, ctx->peer.port != 0
- *   - ctx->local_port != 0 (otherwise success = false)
- *
- * ctx->predicted_peer_port is ignored.
- */
-xury_err_t xury_weapon_upnp_try(const xury_weapon_attempt_ctx_t *ctx,
-                                xury_weapon_attempt_result_t *out);
-
-/*
- * NAT-PMP port mapping.
- *
- * Implements Phase H weapon XURY_WEAPON_NATPMP (priority 4).
- *
- * Preconditions are the same shape as UPnP: IPv4 peer, non-zero
- * local_port. ctx->predicted_peer_port is ignored.
- */
-xury_err_t xury_weapon_natpmp_try(const xury_weapon_attempt_ctx_t *ctx,
-                                  xury_weapon_attempt_result_t *out);
-
-/*
- * PCP port mapping.
- *
- * Implements Phase H weapon XURY_WEAPON_PCP (priority 5).
- *
- * Preconditions are the same shape as UPnP and NAT-PMP.
- * ctx->predicted_peer_port is ignored.
- */
-xury_err_t xury_weapon_pcp_try(const xury_weapon_attempt_ctx_t *ctx,
-                               xury_weapon_attempt_result_t *out);
-
-/*
- * UDP hole punching.
- *
- * Implements Phase H weapon XURY_WEAPON_HOLE (priority 6).
- *
- * Sends XHOL punch packets toward ctx->peer and listens for XHOL
- * packets from that peer on the same socket. Success means an XHOL
- * packet was received; it proves observed inbound reachability for
- * the attempt only.
- *
- * ctx->local_port is ignored. ctx->predicted_peer_port is ignored.
- */
-xury_err_t xury_weapon_hole_try(const xury_weapon_attempt_ctx_t *ctx,
-                                xury_weapon_attempt_result_t *out);
-
-/*
- * Predicted port punch.
- *
- * Implements Phase H weapon XURY_WEAPON_PREDICT (priority 7).
- *
- * Uses ctx->predicted_peer_port, which the caller computed from
- * scan results. Sends a probe to the peer's current endpoint and,
- * if the prediction is for a different port, to the predicted
- * endpoint as well, and treats any response as success.
- *
- * Preconditions:
- *   - ctx != NULL, out != NULL
- *   - ctx->peer.family is INET or INET6
- *   - ctx->peer.ip non-empty, ctx->peer.port != 0
- *   - ctx->predicted_peer_port != 0 (otherwise success = false)
- *
- * ctx->local_port is ignored.
- */
-xury_err_t xury_weapon_predict_try(const xury_weapon_attempt_ctx_t *ctx,
-                                   xury_weapon_attempt_result_t *out);
 
 #ifdef __cplusplus
 }
