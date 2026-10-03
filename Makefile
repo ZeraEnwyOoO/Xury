@@ -11,6 +11,7 @@
 #   smart/        smart phase (J)
 #   weapons/      weapons phase (H)
 #   peer/         peer phase (I)
+#   blitz/        blitz phase (L)
 #   test/         unit tests
 #
 # ═══════════════════════════════════════════════════════════
@@ -87,6 +88,7 @@ LIB_SRCS := \
     weapons/hole.c \
     weapons/predict.c \
     peer/mirror.c \
+    blitz/race.c \
     $(PLATFORM_SRCS)
 
 LIB      := build/libxury.a
@@ -125,7 +127,8 @@ TEST_SRCS := \
     test/unit/weapons/test_pcp.c \
     test/unit/weapons/test_hole.c \
     test/unit/weapons/test_predict.c \
-    test/unit/peer/test_mirror.c
+    test/unit/peer/test_mirror.c \
+    test/unit/blitz/test_race.c
 
 TEST_BINS := $(TEST_SRCS:test/unit/%.c=build/tests/%)
 
@@ -192,6 +195,10 @@ build/tests/weapons/%: test/unit/weapons/%.c $(LIB)
 	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(LIB) $(LDFLAGS) $(LDLIBS) -o $@
 
 build/tests/peer/%: test/unit/peer/%.c $(LIB)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(LIB) $(LDFLAGS) $(LDLIBS) -o $@
+
+build/tests/blitz/%: test/unit/blitz/%.c $(LIB)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(LIB) $(LDFLAGS) $(LDLIBS) -o $@
 
