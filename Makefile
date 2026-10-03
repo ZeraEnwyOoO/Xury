@@ -78,6 +78,7 @@ LIB_SRCS := \
     smart/cache.c \
     smart/early_term.c \
     smart/learning.c \
+    weapons/ipv6.c \
     weapons/upnp.c \
     weapons/upnp_http.c \
     weapons/upnp_xml.c \
@@ -116,6 +117,7 @@ TEST_SRCS := \
     test/unit/smart/test_cache.c \
     test/unit/smart/test_early_term.c \
     test/unit/smart/test_learning.c \
+    test/unit/weapons/test_ipv6.c \
     test/unit/weapons/test_upnp_xml.c \
     test/unit/weapons/test_upnp_http.c \
     test/unit/weapons/test_upnp.c \
