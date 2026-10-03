@@ -84,6 +84,7 @@ LIB_SRCS := \
     weapons/natpmp.c \
     weapons/pcp.c \
     weapons/hole.c \
+    weapons/predict.c \
     peer/mirror.c \
     $(PLATFORM_SRCS)
 
@@ -121,6 +122,7 @@ TEST_SRCS := \
     test/unit/weapons/test_natpmp.c \
     test/unit/weapons/test_pcp.c \
     test/unit/weapons/test_hole.c \
+    test/unit/weapons/test_predict.c \
     test/unit/peer/test_mirror.c
 
 TEST_BINS := $(TEST_SRCS:test/unit/%.c=build/tests/%)
