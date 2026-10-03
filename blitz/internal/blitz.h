@@ -89,6 +89,7 @@
 
 #include "api/internal/weapon.h"
 #include "weapons/internal/weapon_ops.h"
+#include "smart/internal/learning.h"
 
 #ifdef __cplusplus
 extern "C" {
