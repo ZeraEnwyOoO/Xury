@@ -1,3 +1,4 @@
+ 
  /*
  * Xury — No-Server P2P NAT Traversal Engine (Repo: Xury)
  * Copyright (C) 2026 ASBM Team
@@ -47,6 +48,38 @@
  *
  *   - Does not measure RTT distribution, classify NAT, or score.
  *     Those are scan/ and analysis/ concerns.
+ *
+ * ----------------------------------------------------------------------------
+ * Return-code convention
+ * ----------------------------------------------------------------------------
+ *
+ * This file follows the Phase H weapon return-code convention
+ * documented in weapon_ops.h:
+ *
+ *   XURY_ERR_INVAL  — programming error: NULL ctx, NULL out, bad
+ *                     family, unset peer.
+ *
+ *   XURY_OK         — the attempt ran. Whether it succeeded is in
+ *                     out->success. Real-world network outcomes
+ *                     (no route to the peer, no reply within the
+ *                     timeout) are encoded in the result struct,
+ *                     not in the return code.
+ *
+ *   other errors    — a genuine platform failure that prevented
+ *                     the attempt from running at all: socket
+ *                     creation, socket binding, or a malformed
+ *                     endpoint the platform refused to encode.
+ *
+ * A send failure is classified by asking: "did the probe leave
+ * the local host?" If the platform reports "no route" or "host
+ * unreachable" or "network unreachable", the probe could not be
+ * sent because the network itself could not carry it — a
+ * real-world outcome, not a programming error, not a platform
+ * malfunction. The attempt is reported as success = false. If the
+ * platform reports a malformed endpoint, that is a programming
+ * error and is surfaced as XURY_ERR_INVAL. If the platform reports
+ * a genuine I/O failure (closed socket, out of memory), that is a
+ * platform failure and is surfaced as the corresponding error.
  *
  * ----------------------------------------------------------------------------
  * Dependencies (per docs/DEPENDENCY.md, "What weapons/ may include")
@@ -135,6 +168,40 @@ static bool ipv6_peer_usable(const xury_endpoint_t *ep)
         return false;
     }
     return true;
+}
+
+/*
+ * True if the error code represents a real-world network outcome
+ * that should be encoded as success = false in the result struct,
+ * rather than propagated as an error return.
+ *
+ * The classification is deliberately conservative. Only errors
+ * that clearly describe "the network could not carry this packet"
+ * are treated as real-world outcomes. Everything else propagates.
+ *
+ *   XURY_ERR_NET_UNREACHABLE   — no route to the peer's network
+ *   XURY_ERR_HOST_UNREACHABLE  — no route to the peer's host
+ *   XURY_ERR_NO_ROUTE          — no route at all
+ *   XURY_ERR_NETWORK... (future codes go here)
+ *
+ * XURY_ERR_TIMEOUT is not in this list because recvfrom already
+ * returns it as a distinct "no reply" outcome and the call site
+ * handles it explicitly.
+ *
+ * XURY_ERR_BAD_ENDPOINT is not in this list: a malformed endpoint
+ * is a programming error (the caller supplied bad text), not a
+ * network outcome.
+ */
+static bool is_real_world_send_error(xury_err_t rc)
+{
+    switch (rc) {
+    case XURY_ERR_NET_UNREACHABLE:
+    case XURY_ERR_HOST_UNREACHABLE:
+    case XURY_ERR_NO_ROUTE:
+        return true;
+    default:
+        return false;
+    }
 }
 
 /*
@@ -240,13 +307,21 @@ xury_err_t xury_weapon_ipv6_try(const xury_weapon_attempt_ctx_t *ctx,
                                    &ctx->peer, &sent);
     if (rc != XURY_OK) {
         (void)xury_platform_sock_close(s);
-        /*
-         * A send failure is a real error (no route, permission,
-         * malformed address). It is not "the peer didn't reply".
-         * Record elapsed_ms anyway so the caller can see how long
-         * we spent before the failure.
-         */
         out->elapsed_ms = (uint32_t)(xury_platform_time_ms() - t0);
+
+        /*
+         * A send failure is either a real-world network outcome
+         * ("no route to the peer") or a genuine platform error.
+         * The contract in weapon_ops.h puts real-world outcomes
+         * in the result struct, not in the return code.
+         *
+         * The helper is_real_world_send_error() classifies the
+         * platform error. Real-world errors become success = false
+         * with XURY_OK; anything else propagates.
+         */
+        if (is_real_world_send_error(rc)) {
+            return XURY_OK;   /* success = false, elapsed_ms set */
+        }
         return rc;
     }
     if (sent != sizeof(probe)) {
@@ -297,17 +372,20 @@ xury_err_t xury_weapon_ipv6_try(const xury_weapon_attempt_ctx_t *ctx,
     }
     if (rc == XURY_ERR_TIMEOUT || rc == XURY_ERR_WOULD_BLOCK) {
         /*
-         * Real-world outcome: no reply. Not an error. success
-         * already false from the memset; established_peer already
-         * zeroed.
+         * Real-world outcome: no reply within the deadline.
+         * success stays false; established_peer stays zeroed.
          */
         return XURY_OK;
     }
 
     /*
      * Any other recvfrom failure is a genuine platform error
-     * (ICMP unreachable, socket torn down, etc.). Propagate it
+     * (socket torn down, ICMP unreachable, etc.). Propagate it
      * with elapsed_ms set.
+     *
+     * Note: XURY_ERR_CONNECTION_RESET can be produced by ICMP
+     * port unreachable on a connected UDP socket, but ipv6.c uses
+     * an unconnected socket, so that path does not arise here.
      */
     return rc;
 }
