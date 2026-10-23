@@ -1,0 +1,215 @@
+# XURY — Full Reference Doc (session handoff)
+
+No-Server P2P NAT Traversal Engine. GPL-3. Repo: Xury.
+
+---
+
+## 1. Repo Tree (current, as built)
+
+```
+xury/
+├── include/xury/           [PUBLIC HEADERS]
+│   ├── xury.h  version.h  types.h  err.h  config.h  hooks.h
+│   ├── weapon.h  scan.h  engine.h  peer.h
+│
+├── src/
+│   ├── api/                 [FOUNDATIONAL — done]
+│   │   ├── internal/{version,types,err,weapon,config,hooks,xury}.h
+│   │   └── {version,types,err,weapon,config,hooks,xury}.c
+│   │   (orchestration subset: scan.c, engine.c, peer.c — NOT built,
+│   │    Phase N, needs engine_t)
+│   │
+│   ├── core/                 [Phase C — done]
+│   │   ├── internal/{sock,time,mem,log,endian,bytes,rand}.h
+│   │   └── {sock,time,mem,log,endian,bytes,rand}.c
+│   │
+│   ├── platform/              [Phase D — done, Linux/POSIX only]
+│   │   ├── platform.h
+│   │   ├── posix/{sock,time,log,rand,init}.c
+│   │   └── linux/netlink.c
+│   │
+│   ├── scan/                  [Phase F — done]
+│   │   ├── internal/{sensing,probing,math}.h
+│   │   └── {sensing,probing,math,scan}.c
+│   │
+│   ├── analysis/              [Phase G — done]
+│   │   ├── internal/{analysis,classify,score}.h
+│   │   └── {analysis,classify,score}.c
+│   │
+│   ├── weapons/                [Phase H — done, all 6 implemented]
+│   │   ├── internal/{weapon_ops,ipv6,upnp,upnp_http,upnp_xml,
+│   │   │             natpmp,pcp,hole,predict}.h
+│   │   └── {ipv6,upnp,upnp_http,upnp_xml,natpmp,pcp,hole,predict}.c
+│   │
+│   ├── peer/                   [Phase I — partial]
+│   │   ├── internal/mirror.h   — done
+│   │   └── mirror.c            — done
+│   │   (relay.c, upgrade.c — NOT built, defer to Phase M/engine)
+│   │
+│   ├── smart/                  [Phase J — partial]
+│   │   ├── internal/{cache,early_term,learning}.h
+│   │   └── {cache,early_term,learning}.c   — all done (Stage 1)
+│   │   (adaptive.c — approved to build, no engine dependency needed)
+│   │
+│   ├── blitz/                  [Phase L — V1 done]
+│   │   ├── internal/{blitz,race}.h
+│   │   └── race.c
+│   │
+│   ├── sweet/                  [Phase K — NOT started]
+│   ├── engine/                 [Phase M — NOT started]
+│   └── opt/                    [Phase O — NOT started]
+│
+├── test/unit/
+│   ├── api/   core/   scan/   analysis/   weapons/   peer/   smart/   blitz/
+│   (all passing, see §3)
+│
+├── docs/
+│   ├── RESEARCH.md              — F.3 math/classification hypotheses
+│   ├── DEPENDENCY.md            — layer inclusion rules
+│   ├── AI_CONTEXT.md            — scope reminders + locked decisions
+│   ├── PROBING_DESIGN.md        — no-server rule
+│   └── (ARCHITECTURE.md, DATA_FLOW.md, PROTOCOL.md,
+│        TROUBLESHOOTING.md, API.md — not yet written)
+│
+└── Makefile (prototype build; CMake planned for production)
+```
+
+---
+
+## 2. Phase Status
+
+| Phase | Name | Status |
+|---|---|---|
+| C | Core | ✅ done |
+| D | Platform (POSIX/Linux) | ✅ done |
+| F | Scan | ✅ done |
+| G | Analysis | ✅ done |
+| H | Weapons (7: ipv6, upnp, natpmp, pcp, hole, predict, mirror counted in I) | ✅ done |
+| I | Peer | 🟡 mirror done; relay/upgrade deferred (need engine_t) |
+| J | Smart | 🟡 cache/early_term/learning Stage 1 done; adaptive.c next (no blocker) |
+| K | Sweet (CGNAT) | ❌ not started |
+| L | Blitz | ✅ V1 done (sequential, adaptive is optional peer not parent) |
+| M | Engine | ❌ not started (blocks relay/upgrade/full api orchestration) |
+| N | API orchestration | ❌ not started (api/scan.c viable now, no engine needed) |
+| O | Optimization | ❌ not started |
+| P | Integration tests | ❌ not started (needs real cross-NAT peer, not same-LAN) |
+
+Test suites: 31+, ~600+ individual tests, 100% pass rate as of last full run.
+
+---
+
+## 3. Locked Architecture Decisions
+
+### No-server rule (hard constraint)
+Xury never hardcodes, embeds, or defaults to any server address —
+not even public STUN. Every traversal target is caller-supplied
+(`ctx->peer`). See PROBING_DESIGN.md.
+
+### Layer dependency rules (DEPENDENCY.md)
+- A layer depends only on layers strictly below it.
+- `api/` is two different things in one folder: foundational files
+  (types.c, err.c, weapon.c, config.c, hooks.c, version.c — anyone
+  may depend on these) vs orchestration-wrapper files (scan.c,
+  engine.c, peer.c — not built, nothing may depend on these, they
+  wrap everything else).
+- weapons/ may use: core/, platform/, foundational api/, scan/math.h,
+  analysis/ results, and exactly one Phase I file (peer/mirror.c)
+  when needed (hole.c only) — never pull in relay.c/upgrade.c.
+
+### F.3 math/classification (RESEARCH.md §6)
+- Variance is computed over **delta** (step between consecutive
+  ports), not raw port values — magnitude-independent.
+- Step magnitude uses **median** of deltas, not least-squares slope
+  (slope was too sensitive to single-outlier repeats).
+- Direction (for predict_next) uses **majority vote** of signed
+  deltas, not slope sign or first-delta sign.
+- F.3c (score.c, 11 weapon-probability functions) returns
+  `XURY_ERR_NOT_CALIBRATED` honestly — no fabricated formulas until
+  real measurement data exists.
+
+### smart/ module boundaries
+- No shared `xury_smart_ctx_t` god-struct. cache.c and early_term.c
+  are stateless (explicit typed params). learning.c is the only
+  stateful module, owns its own fixed-size `xury_smart_learning_t`
+  (XURY_NAT_COUNT × XURY_WEAPON_COUNT counters, no heap alloc).
+- Scope strictly `(nat_type, weapon) -> {success, fail}`. Never grows
+  into latency/cost/bandwidth models.
+- adaptive.c (Stage 2) is a **recommender only** — peers with blitz,
+  never a hard dependency. blitz/race.c must work fully with
+  learning=NULL, falling back to api/weapon.c's locked priority
+  order.
+
+### Weapon priority (api/weapon.c, locked, tested)
+`IPV6=1, LAN=2 (detection logic, not a Phase H weapon), UPNP=3,
+NATPMP=4, PCP=5, HOLE=6, PREDICT=7, MIRROR=8, RELAY=9, UPGRADE=10,
+BIRTHDAY=11 (last on purpose)`.
+
+### weapon_ops.h contract
+Plain function per weapon (`xury_weapon_<name>_try(ctx, out)`), no
+vtable. `XURY_ERR_INVAL` for programming errors only (NULL, bad
+family). `XURY_OK + out->success=false` for real-world outcomes
+(timeout, no response) — never a fabricated error code for an
+expected network condition. `elapsed_ms` always recorded on
+`XURY_OK`.
+
+**Exception:** `scan/probing.c` does NOT follow this convention —
+it follows `scan.c`'s own architecture rule instead ("every
+sub-phase always records its own status in the result struct,"
+because `scan.c` discards probing's return code via `(void)` cast).
+So probing.c returns a real error on bind/setup failure AND still
+sets `out->status` — different callers, different contracts,
+documented explicitly in probing.c to prevent a future "fix" that
+breaks scan.c.
+
+### Blitz / Adaptive relationship
+BLITZ is commander, not a weapon. ADAPTIVE is an optional advisor,
+never a parent — BLITZ can run with zero adaptive input, can ignore
+its suggestion, and ADAPTIVE must never call into or require BLITZ.
+V1 = sequential, state-aware, bounded history (64), strict
+loop/revisit detection. V2 (true concurrent racing + cancellation)
+is deferred — needs engine-level lifecycle design, same category as
+relay.c.
+
+### Known bugs fixed this session (don't reintroduce)
+- `probing.c`/`ipv6.c` wildcard bind used empty string — `inet_pton`
+  rejects this. Fixed to literal `"0.0.0.0"` / `"::"`.
+- `classify.c`'s original slope-based step detection was fragile to
+  single-outlier repeats (see F.3 decisions above).
+- `early_term.c` Rule 3 (CACHED_IPV6) had `rule_ipv6_global()` as a
+  precondition, making it dead code (Rule 1 always fired first).
+  Fixed: Rule 3 fires only when probing hasn't produced a result yet
+  (`probing_has_data(p) == false`), not when probing explicitly
+  confirmed or denied peer IPv6 support.
+
+---
+
+## 4. What's immediately buildable next (no blockers)
+- `smart/adaptive.c` (Stage 2) — approved, no engine dependency.
+- `api/scan.c` (Phase N partial) — wraps scan+analysis+blitz, all
+  complete, no engine_t needed.
+- `examples/blitz_mode.c` — doubles as first real-network
+  integration test (needs a genuinely separate-NAT peer, e.g. a
+  cheap VPS or mobile hotspot — NOT a same-LAN device, that
+  produces false positives since no real NAT traversal occurs).
+
+## 5. What's blocked on Phase M (engine/)
+`peer/relay.c`, `peer/upgrade.c`, `api/engine.c`, `api/peer.c` (full
+version) — all need persistent connection lifecycle that only a real
+engine can own correctly. Do not attempt standalone designs for
+these; they were explicitly deferred rather than guessed at.
+
+---
+
+## 6. Project discipline (apply to any future work)
+1. **Dependency-first**: write the real dependency, never a stub to
+   unblock compilation. If only one file from a later phase is
+   needed, write only that file (mirror.c precedent).
+2. **Audit-before-fix**: on any failure, determine root cause
+   (implementation bug / contract mismatch / test error) before
+   changing anything. Quote exact lines, don't summarize from memory.
+3. **No invented constants**: thresholds, formulas, protocol
+   defaults all need a citation (RFC, existing code, or explicit
+   human decision) or an honest `NOT_CALIBRATED`/`UNKNOWN` marker.
+4. **"Mismatch" ≠ "contradiction"**: two things looking inconsistent
+   needs investigation before being called broken — there may be a
+   valid reason (e.g. different callers, different contracts).
