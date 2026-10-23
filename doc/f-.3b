@@ -1,0 +1,122 @@
+# Addendum to RESEARCH.md §2 (F.3b) — DECIDED: Variance Means Delta Variance
+
+## Status: DECIDED (hypothesis, not yet empirically validated — see RESEARCH.md §4)
+
+**Decision: Option 2 — delta variance.** `variance_threshold` in
+`xury_classify_cfg_t` is computed over the deltas (step between
+consecutive ports), not over the raw port values.
+
+**Reason:** two port sequences with identical, perfectly consistent steps
+— e.g. `{5,6,7,8}` and `{50000,50001,50002,50003}` — should classify the
+same way (both SEQUENTIAL_LIKE). Value variance makes the classification
+depend on the absolute size of the port numbers, which has nothing to do
+with predictability. Delta variance depends only on step consistency,
+which is what "predictable" actually means here. This also matches
+RESEARCH.md's original wording ("delta ≈ constant, small variance") more
+literally than the value-variance implementation did.
+
+This is still a hypothesis (per RESEARCH.md's own philosophy) — it has not
+been validated against real NAT measurement data. It is the correct
+starting hypothesis, not a proven fact.
+
+---
+
+## Background: why this needed a decision at all
+
+An audit of the codebase (classify.h, classify.c, math.h, RESEARCH.md, and
+tests) found a genuine ambiguity that the original F.3b spec did not
+resolve: when RESEARCH.md says a sequential-like pattern has "delta ≈
+constant, small variance," it never explicitly states *what* the variance
+is computed over — the raw port values, or the deltas (steps) between
+consecutive ports. The current implementation picked one interpretation
+(value variance). Nothing in the repo proves that was the intended one.
+
+This is not a bug. It's an underspecified hypothesis that needs a human
+decision before it can be called "locked."
+
+---
+
+## The two interpretations
+
+### Option 1 — Value variance (what's implemented now)
+
+`variance_threshold` is compared against the variance of the port numbers
+themselves: `xury_math_variance(ports, n)`.
+
+```
+Ports:    1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007
+Variance of these raw numbers: 5.25 (this is fairly large, because the
+numbers themselves are large — ~1000 — regardless of how "predictable"
+the pattern is)
+```
+
+**Effect**: whether a sequence counts as "predictable" depends partly on
+the absolute magnitude of the port numbers, not just on how consistent the
+step is. A sequence like `{5, 6, 7, 8}` (near zero, small variance) reads
+as far more "sequential" than `{50000, 50001, 50002, 50003}` — even though
+both have the exact same step pattern (step = 1 every time).
+
+### Option 2 — Delta variance (implied by RESEARCH.md's wording)
+
+`variance_threshold` is compared against the variance of the *differences*
+between consecutive ports: `xury_math_variance(deltas, n-1)` where
+`deltas[i] = ports[i+1] - ports[i]`.
+
+```
+Ports:    1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007
+Deltas:      1,    1,    1,    1,    1,    1,    1
+Variance of deltas: 0 (perfectly consistent step, regardless of the
+starting port number)
+```
+
+**Effect**: predictability depends only on how consistent the *step size*
+is, not on the absolute port numbers. `{5,6,7,8}` and
+`{50000,50001,50002,50003}` would be classified the same way (both
+SEQUENTIAL_LIKE, step = 1) — which matches the intuitive meaning of
+"sequential."
+
+---
+
+## Why this matters
+
+The current test failures (`test_sequential_step_one_longer`,
+`test_fixed_step_two`, `test_fixed_step_ten`,
+`test_sequential_with_single_repeat`) all involve port sequences with
+large absolute values but a constant step. Under Option 1 (current
+implementation) they fail to classify as sequential/fixed-step. Under
+Option 2 they would pass without needing any threshold changes, because
+deltas of consistent-step sequences are naturally small numbers regardless
+of the starting port.
+
+This is not just a test-tuning issue — it changes what "predictable" means
+for every NAT this code will ever classify.
+
+---
+
+## Recommendation (a recommendation, not a decision)
+
+Option 2 (delta variance) more directly matches the real-world question
+Xury is trying to answer: *"if I've seen the last few external ports a NAT
+assigned, can I guess the next one?"* That depends on step consistency,
+not on whether the port numbers happen to be small. It also matches the
+literal wording already in RESEARCH.md ("delta ≈ constant, small
+variance") more closely than the current value-variance implementation
+does.
+
+But this is a hypothesis choice, not a proven fact — no measurement has
+validated either option against real NAT behavior yet (per RESEARCH.md
+§4). The decision should be made deliberately and recorded, not inferred
+by whoever implements next.
+
+---
+
+## Action needed
+
+1. Pick Option 1 or Option 2 (or propose a third interpretation).
+2. Record the choice here with a one-line reason, and mark it clearly as
+   **hypothesis, not fact** — consistent with the rest of RESEARCH.md's
+   philosophy.
+3. Only after that, instruct implementation to match the recorded choice.
+   Do not let an AI infer the "obviously correct" interpretation on its
+   own — as this audit shows, both readings are defensible from the text
+   alone.
