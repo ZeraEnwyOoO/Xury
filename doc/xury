@@ -1,0 +1,138 @@
+# DEPENDENCY.md — Xury layer dependency rules
+
+## Purpose
+
+This file states which layer may include/call which other layer. It
+exists because "phase number" and "safe to depend on" are not the
+same thing — a module can be phase-adjacent on paper but still
+create a circular or backward dependency if included carelessly.
+When in doubt, check here before adding an `#include`.
+
+The general rule: **a layer may depend on anything strictly below it
+in the dependency graph, and only on foundational (non-orchestrating)
+files within its own or adjacent layers.** Orchestration/wrapper
+files that will eventually call *back into* the layer you're writing
+must never be depended on by that layer.
+
+---
+
+## The dependency graph (bottom to top)
+
+```
+core/            (Phase C)  — sock dispatch, mem, time, log, endian,
+                               bytes, rand — foundation, no NAT
+                               knowledge at all
+platform/        (Phase D)  — posix/linux real syscalls, implements
+                               core/'s dispatch targets
+api/ (foundational subset)  — types.c, err.c, config.c, weapon.c,
+                               hooks.c, version.c — public type
+                               system utilities, no NAT logic
+scan/            (Phase F)  — sensing, probing, math (F.3a)
+analysis/        (Phase G)  — classify (F.3b), score (F.3c)
+smart/           (Phase J)  — cache, early_term, learning, adaptive
+weapons/         (Phase H)  — ipv6, upnp, natpmp, pcp, hole, predict
+peer/            (Phase I)  — mirror, relay, upgrade
+sweet/           (Phase K)  — cgnat, exploit, mimic, negotiate, adapt
+blitz/           (Phase L)  — race, winner, orchestration across weapons
+engine/          (Phase M)  — context.h (cycle-breaker), lifecycle,
+                               orchestrator
+api/ (orchestration subset) (Phase N) — scan.c, engine.c, peer.c —
+                               these WRAP the layers above; nothing
+                               below may depend on them
+```
+
+---
+
+## Rule: `api/` is two different things in one folder
+
+This is the single most important rule to internalize, because the
+folder name alone doesn't tell you which kind of file you're looking
+at.
+
+**Foundational `api/*.c`** (already built, Phase 1-ish):
+`types.c`, `err.c`, `weapon.c`, `config.c`, `hooks.c`, `version.c`.
+These are public type-system utilities. They contain no NAT-specific
+orchestration logic and have no dependency on `scan/`, `analysis/`,
+`weapons/`, or anything above. **Any layer may depend on these.**
+
+**Orchestration-wrapper `api/*.c`** (Phase N, not yet built):
+`scan.c`, `engine.c`, `peer.c`. These will *wrap* `scan/`,
+`analysis/`, `engine/`, etc. as the public-facing interface.
+**Nothing below Phase N may depend on these** — doing so creates an
+immediate circular dependency, since these files exist specifically
+to call into the lower layers.
+
+Concretely: `scan/sensing.c` including `api/internal/types.h` is
+fine (foundational). `scan/sensing.c` including `api/internal/scan.h`
+would not be fine (that header belongs to the orchestration wrapper
+that will one day call `sensing.c`, not the other way around).
+
+---
+
+## What `weapons/` (Phase H) may include
+
+Since Phase H is the current focus, this section is explicit.
+
+**Allowed:**
+- `core/*` (Phase C) — sock, time, mem, rand, bytes, endian, log.
+  All complete and tested.
+- `platform/*` (Phase D) — posix/linux real syscalls. Complete and
+  tested.
+- Foundational `api/*` — `api/internal/types.h` (endpoint helpers,
+  `xury_endpoint_is_global_v6()` etc.), `api/internal/err.h`,
+  `api/internal/weapon.h` (the priority/dispatch table and weapon
+  enum — this is the contract `weapons/*.c` implements against),
+  `api/internal/config.h`, `api/internal/hooks.h`.
+- `scan/*` (Phase F) — `scan/internal/math.h` if a weapon needs
+  `xury_math_median()`, `xury_math_predict_next()`, etc. (e.g.
+  `predict.c` will need this directly).
+- `analysis/*` (Phase G) — classification results, if a weapon needs
+  to know the classified pattern to decide how to act.
+- **One specific file from Phase I when actually needed**:
+  `peer/internal/mirror.h` / `peer/mirror.c`, required by `hole.c`
+  only. Do not pull in `peer/relay.c` or `peer/upgrade.c` for this —
+  they are not needed by any Phase H weapon.
+
+**Not allowed:**
+- Orchestration `api/*` (`api/scan.c`, `api/engine.c`, `api/peer.c`)
+  — not built yet, and would be circular regardless.
+- `smart/*` — `smart/learning.c` and `smart/adaptive.c` depend on
+  Phase H's output (`(nat_type, weapon) -> {success, fail}`), so
+  Phase H must never depend back on `smart/`. This is exactly the
+  circular-dependency shape that was caught and resolved by
+  splitting `learning.c` into Stage 1 (data collection, no
+  dependency on weapons) and Stage 2 (decision logic, deferred until
+  Phase H exists).
+- `blitz/*`, `engine/*`, `sweet/*` — all higher layers, not yet
+  built, would be circular.
+- Any hardcoded server address, of any kind (see
+  `docs/PROBING_DESIGN.md`). If a weapon needs a network target, it
+  must come from a caller-supplied peer endpoint or config, never a
+  literal address baked into `weapons/*.c`.
+
+---
+
+## Rule: within a phase, order still matters
+
+Phase D (platform) is a case that already came up: `core/sock.c`
+depends on `platform/posix/sock.c` (or another platform
+implementation) being present at link time, even though `core/` is
+numbered before `platform/` in the phase list. In practice, write
+`platform/platform.h` (the interface) before or alongside
+`core/sock.c`'s dispatch logic, and confirm the platform
+implementation exists before assuming a dispatch call will resolve
+to something real rather than a "not implemented" error.
+
+The same caution applies within Phase H: `weapon.c` (the dispatcher)
+should be written with an interface in mind before or alongside the
+first concrete weapon (`ipv6.c`), the same way `core/sock.c` and
+`platform/posix/sock.c` were sequenced.
+
+---
+
+## What this file is not
+
+This file does not describe *what* each module does — see
+`docs/ARCHITECTURE.md` for that. It only describes *what may include
+what*, to prevent circular dependencies and stub-driven development
+from recurring as new phases are built.
